@@ -1,0 +1,274 @@
+openapi: 3.0.3
+info:
+  title: Ttirring (띠링) Platform API
+  version: 0.1.0
+  description: >
+    Core endpoints for dispatch, reservation, wallet recharge, settlements.
+    All sample values are placeholders (no real addresses/coords).
+servers:
+  - url: http://localhost:3000
+    description: Local mock server
+
+tags:
+  - name: Dispatch
+  - name: Reservations
+  - name: Jobs
+  - name: Wallet
+  - name: Settlements
+paths:
+  /v1/dispatch/soft:
+    post:
+      tags: [Dispatch]
+      summary: Send a soft dispatch to a specific driver
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SoftDispatchRequest'
+      responses:
+        '202':
+          description: Dispatch request accepted for delivery
+  /v1/dispatch/response:
+    post:
+      tags: [Dispatch]
+      summary: Driver response to a dispatch popup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DispatchResponse'
+      responses:
+        '200':
+          description: Response recorded
+  /v1/reservations:
+    post:
+      tags: [Reservations]
+      summary: Accept a next-call reservation (driver-side; 1 job max per driver)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReservationCreate'
+      responses:
+        '201':
+          description: Reservation created
+  /v1/reservations/{job_id}:
+    delete:
+      tags: [Reservations]
+      summary: Cancel a reservation (allowed once per job/driver policy)
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Reservation canceled
+  /v1/channels/{channel_id}/candidates:
+    get:
+      tags: [Dispatch]
+      summary: Get candidate driver list with sort/filter
+      parameters:
+        - in: path
+          name: channel_id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: sort
+          schema: { type: string, enum: [eta, distance, rating, recent_done, accept_rate] }
+          example: eta
+        - in: query
+          name: filters
+          schema:
+            type: object
+            additionalProperties: true
+          style: deepObject
+          explode: true
+          examples:
+            example1:
+              value: { state: "IDLE", qualified: ["DAERI"], finance_ok: true, gps_fresh_max_min: 3 }
+      responses:
+        '200':
+          description: Candidate list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Candidate'
+  /v1/jobs:
+    post:
+      tags: [Jobs]
+      summary: Create a new job (request)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCreate'
+      responses:
+        '201':
+          description: Job created
+  /v1/jobs/{job_id}:
+    get:
+      tags: [Jobs]
+      summary: Get job by id
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Job detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+  /v1/wallet/recharges:
+    post:
+      tags: [Wallet]
+      summary: Submit a wallet recharge request (customer app)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RechargeRequest'
+      responses:
+        '201':
+          description: Recharge request submitted
+  /v1/settlements/submit:
+    post:
+      tags: [Settlements]
+      summary: Driver submits settlement (1h edit window opens)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettlementSubmit'
+      responses:
+        '200':
+          description: Settlement submitted
+
+components:
+  schemas:
+    SoftDispatchRequest:
+      type: object
+      required: [job_id, driver_id, channel_id, expires_in_sec, summary]
+      properties:
+        job_id: { type: string, example: "J123" }
+        driver_id: { type: string, example: "D33" }
+        channel_id: { type: string, example: "C001" }
+        expires_in_sec: { type: integer, example: 15 }
+        reason: { type: string, enum: [NEAR, EXPERT, VIP, URGENT, OTHER] }
+        summary:
+          type: object
+          properties:
+            type: { type: string, enum: [RIDE, DAERI, ERRAND] }
+            payment: { type: string, enum: [CASH, WALLET, VIP] }
+            pickup:
+              type: object
+              properties:
+                addr: { type: string, example: "{{PICKUP_ADDR}}" }
+                lat: { type: number, example: 0.0 }
+                lng: { type: number, example: 0.0 }
+            dropoff:
+              type: object
+              properties:
+                addr: { type: string, example: "{{DROPOFF_ADDR}}" }
+                lat: { type: number, example: 0.0 }
+                lng: { type: number, example: 0.0 }
+            eta_sec: { type: integer, example: 300 }
+            distance_m: { type: integer, example: 1200 }
+    DispatchResponse:
+      type: object
+      required: [job_id, driver_id, mode, response]
+      properties:
+        job_id: { type: string, example: "J123" }
+        driver_id: { type: string, example: "D33" }
+        mode: { type: string, enum: [SOFT, BROADCAST, RESERVE] }
+        response: { type: string, enum: [ACCEPT, DECLINE, TIMEOUT] }
+        decline_reason: { type: string, nullable: true }
+        device:
+          type: object
+          properties:
+            os: { type: string, example: "android" }
+            app_ver: { type: string, example: "1.0.0" }
+    ReservationCreate:
+      type: object
+      required: [job_id, driver_id]
+      properties:
+        job_id: { type: string, example: "J200" }
+        driver_id: { type: string, example: "D33" }
+    Candidate:
+      type: object
+      properties:
+        callsign: { type: integer, example: 33 }
+        state: { type: string, example: "IDLE" }
+        eta_sec: { type: integer, example: 300 }
+        distance_m: { type: integer, example: 1200 }
+        rating: { type: number, example: 4.9 }
+        accept_rate_30d: { type: number, example: 0.85 }
+        cancel_rate_30d: { type: number, example: 0.04 }
+        qualified: { type: array, items: { type: string }, example: ["DAERI"] }
+        finance_ok: { type: boolean, example: true }
+        gps_fresh_sec: { type: integer, example: 60 }
+    JobCreate:
+      type: object
+      required: [channel_id, type, payment_method, pickup, dropoff]
+      properties:
+        channel_id: { type: string, example: "C001" }
+        type: { type: string, enum: [RIDE, DAERI, ERRAND] }
+        payment_method: { type: string, enum: [CASH, WALLET, VIP] }
+        pickup:
+          type: object
+          properties:
+            addr: { type: string, example: "{{PICKUP_ADDR}}" }
+            lat: { type: number, example: 0.0 }
+            lng: { type: number, example: 0.0 }
+        dropoff:
+          type: object
+          properties:
+            addr: { type: string, example: "{{DROPOFF_ADDR}}" }
+            lat: { type: number, example: 0.0 }
+            lng: { type: number, example: 0.0 }
+    Job:
+      type: object
+      properties:
+        job_id: { type: string }
+        channel_id: { type: string }
+        type: { type: string }
+        status: { type: string }
+        customer_id: { type: string, nullable: true }
+        payment_method: { type: string }
+        pickup_addr_id: { type: string }
+        dropoff_addr_id: { type: string }
+        created_at: { type: string, format: date-time }
+        assigned_at: { type: string, format: date-time, nullable: true }
+    RechargeRequest:
+      type: object
+      required: [customer_id, amount, payer_name]
+      properties:
+        customer_id: { type: string, example: "U777" }
+        amount: { type: number, example: 50000 }
+        payer_name: { type: string, example: "{{PAYER_NAME}}" }
+        evidence_url: { type: string, nullable: true }
+    SettlementSubmit:
+      type: object
+      required: [driver_id, period]
+      properties:
+        driver_id: { type: string, example: "D33" }
+        period:
+          type: object
+          properties:
+            start: { type: string, example: "2025-08-18" }
+            end: { type: string, example: "2025-08-24" }
+        net_estimate: { type: number, example: 352000 }
