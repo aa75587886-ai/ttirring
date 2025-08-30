@@ -1,0 +1,41 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  // SQLite 사용
+  provider = "sqlite"
+  url      = env("DATABASE_URL") // 예: "file:./dev.db"
+}
+
+enum ReservationStatus {
+  PENDING
+  ASSIGNED
+  PICKED_UP
+  DROPPED_OFF
+  CANCELED
+}
+
+model Reservation {
+  id            Int               @id @default(autoincrement())
+  jobId         String            @unique
+  channelId     String
+  passengerName String?           // 서버는 선택값으로 처리
+  pickupAddr    String?           // 서버는 선택값으로 처리
+  dropoffAddr   String?           // 서버는 선택값으로 처리
+  status        ReservationStatus @default(PENDING)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+}
+
+model Job {
+  // 서버는 jobId를 PK로 씀(기존 id/JobStatus/driverId, channelId 제거)
+  jobId            String            @id
+  status           ReservationStatus @default(PENDING)
+  pickupAddr       String?
+  dropoffAddr      String?
+  assignedDriverId String?           // 서버 필드명과 동일
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}

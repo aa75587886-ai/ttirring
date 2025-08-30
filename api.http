@@ -1,0 +1,52 @@
+@base = http://localhost:3000
+@json = application/json
+
+### 서버 상태 확인
+GET {{base}}/health
+
+### Soft Dispatch
+POST {{base}}/v1/dispatch/soft
+Content-Type: {{json}}
+
+{
+  "job_id": "J123",
+  "driver_id": "D33",
+  "channel_id": "C001",
+  "expires_in_sec": 15,
+  "reason": "NEAR",
+  "summary": {
+    "type": "RIDE",
+    "payment": "CASH",
+    "pickup": { "addr": "집", "lat": 0, "lng": 0 },
+    "dropoff": { "addr": "회사", "lat": 0, "lng": 0 },
+    "eta_sec": 300,
+    "distance_m": 1200
+  }
+}
+
+### Dispatch Response
+POST {{base}}/v1/dispatch/response
+Content-Type: {{json}}
+
+{
+  "job_id": "J123",
+  "driver_id": "D33",
+  "mode": "SOFT",
+  "response": "ACCEPT",
+  "device": { "os": "android", "app_ver": "1.0.0" }
+}
+
+### 후보 기사 리스트
+GET {{base}}/v1/channels/C001/candidates
+
+### 예약 생성
+POST {{base}}/v1/reservations
+Content-Type: {{json}}
+
+{
+  "job_id": "J200",
+  "driver_id": "D33"
+}
+
+### 예약 취소
+DELETE {{base}}/v1/reservations/J200

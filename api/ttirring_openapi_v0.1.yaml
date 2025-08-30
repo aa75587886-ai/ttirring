@@ -2,123 +2,234 @@ openapi: 3.0.3
 info:
   title: Ttirring (띠링) Platform API
   version: 0.1.0
-  description: >
-    Core endpoints for dispatch, reservation, wallet recharge, settlements.
+  description: |
+    Core endpoints for dispatch, reservations, jobs, wallet recharge, and settlements.
     All sample values are placeholders (no real addresses/coords).
 servers:
   - url: http://localhost:3000
     description: Local mock server
 
 tags:
+  - name: Health
   - name: Dispatch
   - name: Reservations
   - name: Jobs
   - name: Wallet
   - name: Settlements
+
 paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+
   /v1/dispatch/soft:
     post:
       tags: [Dispatch]
       summary: Send a soft dispatch to a specific driver
+      description: |
+        Sends a non-blocking (soft) dispatch ping/notification to a target driver.
+        The driver may choose to accept; no hard assignment is performed here.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SoftDispatchRequest'
-      responses:
-        '202':
-          description: Dispatch request accepted for delivery
-  /v1/dispatch/response:
-    post:
-      tags: [Dispatch]
-      summary: Driver response to a dispatch popup
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/DispatchResponse'
+            examples:
+              sample:
+                value:
+                  job_id: "J300"
+                  driver_id: "DRV-001"
+                  note: "가벼운 확인 요청"
       responses:
         '200':
-          description: Response recorded
+          description: Dispatch notification queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SoftDispatchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /v1/reservations:
     post:
       tags: [Reservations]
-      summary: Accept a next-call reservation (driver-side; 1 job max per driver)
+      summary: Create a reservation
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/ReservationCreate'
+            examples:
+              sample:
+                value:
+                  job_id: "J300"
+                  channel_id: "CH-01"
+                  passenger_name: "홍길동"
+                  pickup_addr: "서울역"
+                  dropoff_addr: "성남시"
       responses:
         '201':
           description: Reservation created
-  /v1/reservations/{job_id}:
-    delete:
-      tags: [Reservations]
-      summary: Cancel a reservation (allowed once per job/driver policy)
-      parameters:
-        - name: job_id
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        '204':
-          description: Reservation canceled
-  /v1/channels/{channel_id}/candidates:
-    get:
-      tags: [Dispatch]
-      summary: Get candidate driver list with sort/filter
-      parameters:
-        - in: path
-          name: channel_id
-          required: true
-          schema: { type: string }
-        - in: query
-          name: sort
-          schema: { type: string, enum: [eta, distance, rating, recent_done, accept_rate] }
-          example: eta
-        - in: query
-          name: filters
-          schema:
-            type: object
-            additionalProperties: true
-          style: deepObject
-          explode: true
-          examples:
-            example1:
-              value: { state: "IDLE", qualified: ["DAERI"], finance_ok: true, gps_fresh_max_min: 3 }
-      responses:
-        '200':
-          description: Candidate list
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Candidate'
+                $ref: '#/components/schemas/ReservationResponse'
+        '409':
+          description: Duplicate job_id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                dup:
+                  value:
+                    ok: false
+                    message: "이미 존재하는 job_id 입니다."
+    get:
+      tags: [Reservations]
+      summary: List reservations
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [PENDING, CONFIRMED, CANCELLED, COMPLETED]
+      responses:
+        '200':
+          description: Paged reservation list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationListResponse'
+
+  /v1/reservations/{id}:
+    get:
+      tags: [Reservations]
+      summary: Get a reservation by numeric id
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Reservation found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Reservations]
+      summary: Update reservation status or fields (partial)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReservationUpdate'
+            examples:
+              statusOnly:
+                value: { status: "CONFIRMED" }
+      responses:
+        '200':
+          description: Updated reservation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /v1/jobs:
     post:
       tags: [Jobs]
-      summary: Create a new job (request)
+      summary: Create a job
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/JobCreate'
+            examples:
+              sample:
+                value:
+                  job_id: "J300"
+                  pickup:
+                    addr: "서울역"
+                    lat: 37.555
+                    lng: 126.9707
+                  dropoff:
+                    addr: "성남시"
+                    lat: 37.42
+                    lng: 127.13
+                  metadata:
+                    channel_id: "CH-01"
+                    passenger_name: "홍길동"
       responses:
         '201':
           description: Job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    get:
+      tags: [Jobs]
+      summary: List jobs
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [CREATED, DISPATCHING, ASSIGNED, IN_PROGRESS, DONE, CANCELLED]
+      responses:
+        '200':
+          description: Paged job list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobListResponse'
+
   /v1/jobs/{job_id}:
     get:
       tags: [Jobs]
-      summary: Get job by id
+      summary: Get a job by job_id (string)
       parameters:
         - in: path
           name: job_id
@@ -126,149 +237,408 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: Job detail
+          description: Job found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Job'
-  /v1/wallet/recharges:
+                $ref: '#/components/schemas/JobResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Jobs]
+      summary: Update a job (partial)
+      description: Update status, assigned driver, or metadata fields.
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobUpdate'
+            examples:
+              statusOnly:
+                value: { status: "DISPATCHING" }
+              assignDriver:
+                value: { driver_id: "DRV-001", status: "ASSIGNED" }
+      responses:
+        '200':
+          description: Job updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/wallet/recharge:
     post:
       tags: [Wallet]
-      summary: Submit a wallet recharge request (customer app)
+      summary: Recharge wallet balance
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/RechargeRequest'
+            examples:
+              sample:
+                value:
+                  user_id: "USR-1001"
+                  amount: 50000
+                  method: "CARD"
       responses:
-        '201':
-          description: Recharge request submitted
-  /v1/settlements/submit:
+        '200':
+          description: Recharge result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RechargeResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /v1/wallet/transactions:
+    get:
+      tags: [Wallet]
+      summary: List wallet transactions
+      parameters:
+        - in: query
+          name: user_id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, default: 10, maximum: 100 }
+      responses:
+        '200':
+          description: Paged transactions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionListResponse'
+
+  /v1/settlements/request:
     post:
       tags: [Settlements]
-      summary: Driver submits settlement (1h edit window opens)
+      summary: Request settlement (payout)
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SettlementSubmit'
+              $ref: '#/components/schemas/SettlementRequest'
+            examples:
+              sample:
+                value:
+                  driver_id: "DRV-001"
+                  amount: 120000
+                  bank_account: "국민 123-45-678901"
       responses:
         '200':
-          description: Settlement submitted
+          description: Settlement request accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /v1/settlements:
+    get:
+      tags: [Settlements]
+      summary: List settlements
+      parameters:
+        - in: query
+          name: driver_id
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: size
+          schema: { type: integer, default: 10, maximum: 100 }
+      responses:
+        '200':
+          description: Paged settlements
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementListResponse'
 
 components:
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            nf:
+              value: { ok: false, message: "Not found" }
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            br:
+              value: { ok: false, message: "Bad request" }
+    Conflict:
+      description: Conflict (duplicate or invalid state)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            conf:
+              value: { ok: false, message: "Conflict" }
+
   schemas:
+    ApiError:
+      type: object
+      properties:
+        ok: { type: boolean, example: false }
+        message: { type: string, example: "에러 메시지" }
+
+    PageMeta:
+      type: object
+      properties:
+        ok: { type: boolean, example: true }
+        page: { type: integer, example: 1 }
+        size: { type: integer, example: 10 }
+        total: { type: integer, example: 1 }
+        pages: { type: integer, example: 1 }
+
+    # ---------- Dispatch ----------
     SoftDispatchRequest:
-      type: object
-      required: [job_id, driver_id, channel_id, expires_in_sec, summary]
-      properties:
-        job_id: { type: string, example: "J123" }
-        driver_id: { type: string, example: "D33" }
-        channel_id: { type: string, example: "C001" }
-        expires_in_sec: { type: integer, example: 15 }
-        reason: { type: string, enum: [NEAR, EXPERT, VIP, URGENT, OTHER] }
-        summary:
-          type: object
-          properties:
-            type: { type: string, enum: [RIDE, DAERI, ERRAND] }
-            payment: { type: string, enum: [CASH, WALLET, VIP] }
-            pickup:
-              type: object
-              properties:
-                addr: { type: string, example: "{{PICKUP_ADDR}}" }
-                lat: { type: number, example: 0.0 }
-                lng: { type: number, example: 0.0 }
-            dropoff:
-              type: object
-              properties:
-                addr: { type: string, example: "{{DROPOFF_ADDR}}" }
-                lat: { type: number, example: 0.0 }
-                lng: { type: number, example: 0.0 }
-            eta_sec: { type: integer, example: 300 }
-            distance_m: { type: integer, example: 1200 }
-    DispatchResponse:
-      type: object
-      required: [job_id, driver_id, mode, response]
-      properties:
-        job_id: { type: string, example: "J123" }
-        driver_id: { type: string, example: "D33" }
-        mode: { type: string, enum: [SOFT, BROADCAST, RESERVE] }
-        response: { type: string, enum: [ACCEPT, DECLINE, TIMEOUT] }
-        decline_reason: { type: string, nullable: true }
-        device:
-          type: object
-          properties:
-            os: { type: string, example: "android" }
-            app_ver: { type: string, example: "1.0.0" }
-    ReservationCreate:
       type: object
       required: [job_id, driver_id]
       properties:
-        job_id: { type: string, example: "J200" }
-        driver_id: { type: string, example: "D33" }
-    Candidate:
+        job_id: { type: string }
+        driver_id: { type: string }
+        note: { type: string, nullable: true }
+    SoftDispatchResponse:
       type: object
       properties:
-        callsign: { type: integer, example: 33 }
-        state: { type: string, example: "IDLE" }
-        eta_sec: { type: integer, example: 300 }
-        distance_m: { type: integer, example: 1200 }
-        rating: { type: number, example: 4.9 }
-        accept_rate_30d: { type: number, example: 0.85 }
-        cancel_rate_30d: { type: number, example: 0.04 }
-        qualified: { type: array, items: { type: string }, example: ["DAERI"] }
-        finance_ok: { type: boolean, example: true }
-        gps_fresh_sec: { type: integer, example: 60 }
-    JobCreate:
+        ok: { type: boolean, example: true }
+        dispatched: { type: boolean, example: true }
+        job_id: { type: string, example: "J300" }
+        driver_id: { type: string, example: "DRV-001" }
+
+    # ---------- Reservations ----------
+    Reservation:
       type: object
-      required: [channel_id, type, payment_method, pickup, dropoff]
       properties:
-        channel_id: { type: string, example: "C001" }
-        type: { type: string, enum: [RIDE, DAERI, ERRAND] }
-        payment_method: { type: string, enum: [CASH, WALLET, VIP] }
-        pickup:
-          type: object
-          properties:
-            addr: { type: string, example: "{{PICKUP_ADDR}}" }
-            lat: { type: number, example: 0.0 }
-            lng: { type: number, example: 0.0 }
-        dropoff:
-          type: object
-          properties:
-            addr: { type: string, example: "{{DROPOFF_ADDR}}" }
-            lat: { type: number, example: 0.0 }
-            lng: { type: number, example: 0.0 }
-    Job:
+        id: { type: integer, example: 1 }
+        jobId: { type: string, example: "J300" }
+        channelId: { type: string, example: "CH-01" }
+        passengerName: { type: string, example: "홍길동" }
+        pickupAddr: { type: string, example: "서울역" }
+        dropoffAddr: { type: string, example: "성남시" }
+        status:
+          type: string
+          enum: [PENDING, CONFIRMED, CANCELLED, COMPLETED]
+          example: PENDING
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    ReservationCreate:
       type: object
+      required: [job_id, channel_id, passenger_name, pickup_addr, dropoff_addr]
       properties:
         job_id: { type: string }
         channel_id: { type: string }
-        type: { type: string }
-        status: { type: string }
-        customer_id: { type: string, nullable: true }
-        payment_method: { type: string }
-        pickup_addr_id: { type: string }
-        dropoff_addr_id: { type: string }
-        created_at: { type: string, format: date-time }
-        assigned_at: { type: string, format: date-time, nullable: true }
-    RechargeRequest:
+        passenger_name: { type: string }
+        pickup_addr: { type: string }
+        dropoff_addr: { type: string }
+
+    ReservationUpdate:
       type: object
-      required: [customer_id, amount, payer_name]
       properties:
-        customer_id: { type: string, example: "U777" }
-        amount: { type: number, example: 50000 }
-        payer_name: { type: string, example: "{{PAYER_NAME}}" }
-        evidence_url: { type: string, nullable: true }
-    SettlementSubmit:
+        status:
+          type: string
+          enum: [PENDING, CONFIRMED, CANCELLED, COMPLETED]
+        passenger_name: { type: string }
+        pickup_addr: { type: string }
+        dropoff_addr: { type: string }
+
+    ReservationResponse:
       type: object
-      required: [driver_id, period]
       properties:
-        driver_id: { type: string, example: "D33" }
-        period:
+        ok: { type: boolean, example: true }
+        reservation:
+          $ref: '#/components/schemas/Reservation'
+
+    ReservationListResponse:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Reservation'
+
+    # ---------- Jobs ----------
+    Job:
+      type: object
+      properties:
+        jobId: { type: string, example: "J300" }
+        status:
+          type: string
+          enum: [CREATED, DISPATCHING, ASSIGNED, IN_PROGRESS, DONE, CANCELLED]
+          example: CREATED
+        driverId:
+          type: string
+          nullable: true
+          example: "DRV-001"
+        pickup:
           type: object
           properties:
-            start: { type: string, example: "2025-08-18" }
-            end: { type: string, example: "2025-08-24" }
-        net_estimate: { type: number, example: 352000 }
+            addr: { type: string, example: "서울역" }
+            lat: { type: number, format: double, example: 37.555 }
+            lng: { type: number, format: double, example: 126.9707 }
+        dropoff:
+          type: object
+          properties:
+            addr: { type: string, example: "성남시" }
+            lat: { type: number, format: double, example: 37.42 }
+            lng: { type: number, format: double, example: 127.13 }
+        metadata:
+          type: object
+          additionalProperties: true
+          example:
+            channel_id: "CH-01"
+            passenger_name: "홍길동"
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    JobCreate:
+      type: object
+      required: [job_id, pickup, dropoff]
+      properties:
+        job_id: { type: string }
+        pickup:
+          type: object
+          required: [addr]
+          properties:
+            addr: { type: string }
+            lat: { type: number, format: double }
+            lng: { type: number, format: double }
+        dropoff:
+          type: object
+          required: [addr]
+          properties:
+            addr: { type: string }
+            lat: { type: number, format: double }
+            lng: { type: number, format: double }
+        metadata:
+          type: object
+          additionalProperties: true
+
+    JobUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [CREATED, DISPATCHING, ASSIGNED, IN_PROGRESS, DONE, CANCELLED]
+        driver_id:
+          type: string
+          description: Assign or change driver
+        metadata:
+          type: object
+          additionalProperties: true
+
+    JobResponse:
+      type: object
+      properties:
+        ok: { type: boolean, example: true }
+        job:
+          $ref: '#/components/schemas/Job'
+
+    JobListResponse:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Job'
+
+    # ---------- Wallet ----------
+    RechargeRequest:
+      type: object
+      required: [user_id, amount, method]
+      properties:
+        user_id: { type: string }
+        amount: { type: integer, minimum: 1 }
+        method:
+          type: string
+          enum: [CARD, BANK, POINT]
+    RechargeResponse:
+      type: object
+      properties:
+        ok: { type: boolean, example: true }
+        balance: { type: integer, example: 150000 }
+        transaction_id: { type: string, example: "TX-20250830-0001" }
+
+    Transaction:
+      type: object
+      properties:
+        id: { type: string, example: "TX-20250830-0001" }
+        type: { type: string, enum: [RECHARGE, PAYMENT, REFUND, ADJUST] }
+        amount: { type: integer, example: 50000 }
+        createdAt: { type: string, format: date-time }
+        note: { type: string, nullable: true }
+
+    TransactionListResponse:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Transaction'
+
+    # ---------- Settlements ----------
+    SettlementRequest:
+      type: object
+      required: [driver_id, amount, bank_account]
+      properties:
+        driver_id: { type: string }
+        amount: { type: integer, minimum: 1 }
+        bank_account: { type: string }
+    Settlement:
+      type: object
+      properties:
+        id: { type: string, example: "STL-0001" }
+        driverId: { type: string, example: "DRV-001" }
+        amount: { type: integer, example: 120000 }
+        status: { type: string, enum: [REQUESTED, PROCESSING, PAID, REJECTED], example: REQUESTED }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    SettlementResponse:
+      type: object
+      properties:
+        ok: { type: boolean, example: true }
+        settlement:
+          $ref: '#/components/schemas/Settlement'
+    SettlementListResponse:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Settlement'
