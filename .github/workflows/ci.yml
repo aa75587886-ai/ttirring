@@ -15,6 +15,6 @@ jobs:
       - name: Install deps
         run: npm ci || npm install
       - name: Prisma generate
-        run: npm run prisma:generate
+        run: npx prisma generate
       - name: Smoke check
         run: node -e "console.log('CI OK')"
