@@ -17,19 +17,16 @@ jobs:
         with:
           node-version: 22
 
-      # 1. npm 캐시 초기화 후 설치 (권한 꼬임 방지)
-      - name: Clean npm cache & install
+      - name: Clean install
         run: |
           npm cache clean --force
           rm -rf node_modules package-lock.json
           npm install
 
-      # 2. 디버그: bin 디렉토리 확인
       - name: Show prisma bin
         run: |
           ls -l node_modules/.bin || true
 
-      # 3. Prisma validate & generate (권한 보정 후 실행)
       - name: Prisma validate & generate
         env:
           DATABASE_URL: "file:./prisma/dev.db"
@@ -42,7 +39,10 @@ jobs:
 
       - name: Import check (server entry)
         run: |
-          node -e "import('./server/server.js').then(()=>console.log('Import OK')).catch(e=>{console.error(e); process.exit(1);})"
+          node -e "import('./server/server.js')
+            .then(()=>console.log('Import OK'))
+            .catch(e=>{console.error(e); process.exit(1);})
+            .finally(()=>process.exit(0))"
 
       - name: Final verdict
         run: echo "✅ CI PASSED"
