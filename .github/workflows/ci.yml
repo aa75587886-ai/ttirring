@@ -9,31 +9,46 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) 저장소 체크아웃
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2) Node.js 설정
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
-      # 3) 의존성 설치
+      # 설치 훅으로 인한 혼선을 막기 위해 스크립트는 무시하고 설치
       - name: Install dependencies
         run: |
-          npm ci || npm install
+          set -euxo pipefail
+          npm ci --ignore-scripts || npm install --ignore-scripts
 
-      # 4) Prisma Client 생성
-      - name: Prisma generate
-        env:
-          DATABASE_URL: "file:./prisma/dev.db"   # SQLite 임시 DB
+      # 디버그: 프로젝트 트리/스키마/패키지 상태 출력
+      - name: Sanity check (files & package)
         run: |
+          set -euxo pipefail
+          echo "=== CWD ==="; pwd
+          echo "=== ROOT LIST ==="; ls -la
+          echo "=== PRISMA DIR ==="; ls -la prisma || true
+          test -f prisma/schema.prisma || (echo "::error file=prisma/schema.prisma::schema.prisma not found" && exit 1)
+          node -e "const p=require('./package.json'); console.log({deps:p.dependencies,devDeps:p.devDependencies,scripts:p.scripts})"
+
+      # 스키마 문법검사 + 클라이언트 생성 (임시 SQLite로만 진행)
+      - name: Prisma validate & generate
+        env:
+          DATABASE_URL: "file:./prisma/dev.db"
+        run: |
+          set -euxo pipefail
           npx prisma --version
+          npx prisma validate --schema=prisma/schema.prisma
           npx prisma generate --schema=prisma/schema.prisma
 
-      # 5) 간단 Smoke 테스트
-      - name: Smoke check
+      # ESM 임포트 체크 (server/server.js 구문/경로/모듈 확인)
+      - name: Import check (server entry)
         run: |
-          node -e "console.log('CI OK')"
+          set -euxo pipefail
+          node -e "import('./server/server.js').then(()=>console.log('Import OK')).catch(e=>{console.error(e); process.exit(1);})"
+
+      - name: Final verdict
+        run: echo "✅ CI PASSED"
