@@ -7,14 +7,33 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # 1) 저장소 체크아웃
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2) Node.js 설정
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install deps
-        run: npm ci || npm install
+          cache: npm
+
+      # 3) 의존성 설치
+      - name: Install dependencies
+        run: |
+          npm ci || npm install
+
+      # 4) Prisma Client 생성
       - name: Prisma generate
-        run: npx prisma generate
+        env:
+          DATABASE_URL: "file:./prisma/dev.db"   # SQLite 임시 DB
+        run: |
+          npx prisma --version
+          npx prisma generate --schema=prisma/schema.prisma
+
+      # 5) 간단 Smoke 테스트
       - name: Smoke check
-        run: node -e "console.log('CI OK')"
+        run: |
+          node -e "console.log('CI OK')"
