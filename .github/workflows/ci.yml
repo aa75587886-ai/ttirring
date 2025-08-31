@@ -9,46 +9,45 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1) 저장소 체크아웃
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 2) Node.js 세팅
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
-      # 설치 훅으로 인한 혼선을 막기 위해 스크립트는 무시하고 설치
+      # 3) 의존성 설치 (postinstall 훅 무시)
       - name: Install dependencies
         run: |
-          set -euxo pipefail
           npm ci --ignore-scripts || npm install --ignore-scripts
 
-      # 디버그: 프로젝트 트리/스키마/패키지 상태 출력
+      # 4) 프로젝트 구조/패키지 상태 확인
       - name: Sanity check (files & package)
         run: |
-          set -euxo pipefail
           echo "=== CWD ==="; pwd
           echo "=== ROOT LIST ==="; ls -la
           echo "=== PRISMA DIR ==="; ls -la prisma || true
           test -f prisma/schema.prisma || (echo "::error file=prisma/schema.prisma::schema.prisma not found" && exit 1)
           node -e "const p=require('./package.json'); console.log({deps:p.dependencies,devDeps:p.devDependencies,scripts:p.scripts})"
 
-      # 스키마 문법검사 + 클라이언트 생성 (임시 SQLite로만 진행)
+      # 5) Prisma validate & generate (로컬 바이너리 직접 호출 → Permission denied 방지)
       - name: Prisma validate & generate
         env:
           DATABASE_URL: "file:./prisma/dev.db"
         run: |
-          set -euxo pipefail
-          npx prisma --version
-          npx prisma validate --schema=prisma/schema.prisma
-          npx prisma generate --schema=prisma/schema.prisma
+          ./node_modules/.bin/prisma --version
+          ./node_modules/.bin/prisma validate --schema=prisma/schema.prisma
+          ./node_modules/.bin/prisma generate --schema=prisma/schema.prisma
 
-      # ESM 임포트 체크 (server/server.js 구문/경로/모듈 확인)
+      # 6) 서버 코드 import 테스트 (ESM 구문/모듈 확인)
       - name: Import check (server entry)
         run: |
-          set -euxo pipefail
           node -e "import('./server/server.js').then(()=>console.log('Import OK')).catch(e=>{console.error(e); process.exit(1);})"
 
+      # 7) 최종 결과
       - name: Final verdict
         run: echo "✅ CI PASSED"
