@@ -16,26 +16,29 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
-      # postinstall 허용 (prisma 설치 필요)
-      - name: Install dependencies
+      # 1. npm 캐시 초기화 후 설치 (권한 꼬임 방지)
+      - name: Clean npm cache & install
         run: |
-          npm ci || npm install
+          npm cache clean --force
+          rm -rf node_modules package-lock.json
+          npm install
 
-      - name: Sanity check
+      # 2. 디버그: bin 디렉토리 확인
+      - name: Show prisma bin
         run: |
-          echo "=== ROOT LIST ==="; ls -la
-          echo "=== PRISMA DIR ==="; ls -la prisma || true
-          node -e "const p=require('./package.json'); console.log({deps:p.dependencies,devDeps:p.devDependencies,scripts:p.scripts})"
+          ls -l node_modules/.bin || true
 
+      # 3. Prisma validate & generate (권한 보정 후 실행)
       - name: Prisma validate & generate
         env:
           DATABASE_URL: "file:./prisma/dev.db"
         run: |
-          npx -y prisma@6.15.0 --version
-          npx -y prisma@6.15.0 validate --schema=prisma/schema.prisma
-          npx -y prisma@6.15.0 generate --schema=prisma/schema.prisma
+          chmod +x node_modules/.bin/prisma || true
+          ls -l node_modules/.bin/prisma || true
+          npx prisma --version
+          npx prisma validate --schema=prisma/schema.prisma
+          npx prisma generate --schema=prisma/schema.prisma
 
       - name: Import check (server entry)
         run: |
