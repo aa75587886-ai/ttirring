@@ -18,9 +18,10 @@ jobs:
           node-version: 22
           cache: npm
 
+      # postinstall 허용 (prisma 설치 필요)
       - name: Install dependencies
         run: |
-          npm ci --ignore-scripts || npm install --ignore-scripts
+          npm ci || npm install
 
       - name: Sanity check
         run: |
@@ -32,9 +33,9 @@ jobs:
         env:
           DATABASE_URL: "file:./prisma/dev.db"
         run: |
-          npx prisma --version
-          npx prisma validate --schema=prisma/schema.prisma
-          npx prisma generate --schema=prisma/schema.prisma
+          npx -y prisma@6.15.0 --version
+          npx -y prisma@6.15.0 validate --schema=prisma/schema.prisma
+          npx -y prisma@6.15.0 generate --schema=prisma/schema.prisma
 
       - name: Import check (server entry)
         run: |
