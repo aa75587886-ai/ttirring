@@ -7,6 +7,7 @@ on:
 jobs:
   newman:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -15,19 +16,30 @@ jobs:
           node-version: 22
 
       - name: Install deps
-        run: npm ci || npm install
-
-      - name: Prisma generate
-        run: npx prisma generate
-
-      - name: Start API (bg)
         run: |
-          export PORT=3000
+          npm ci || npm install
+          node -v
+          npm -v
+          npm list --depth=0 || true
+
+      - name: Prepare Prisma (sqlite fallback)
+        env:
+          DATABASE_URL: "file:./dev.db"
+        run: |
+          npx prisma generate
+          # migration이 없으면 db push로 스키마 반영
+          npx prisma migrate deploy || npx prisma db push
+
+      - name: Start API (bg) and wait for /health
+        env:
+          PORT: "3000"
+          DATABASE_URL: "file:./dev.db"
+        run: |
+          set -e
+          echo "Starting project server: server/server.js"
           node server/server.js & echo $! > api.pid
-          for i in {1..30}; do
-            curl -fsS "http://127.0.0.1:3000/health" && break
-            sleep 1
-          done
+          # wait-on으로 최대 60초 대기
+          npx wait-on -t 60000 http://127.0.0.1:3000/health
 
       - name: Install Newman
         run: npm i -g newman
@@ -40,4 +52,6 @@ jobs:
       - name: Stop API
         if: always()
         run: |
-          kill $(cat api.pid) || true
+          if [ -f api.pid ]; then
+            kill $(cat api.pid) || true
+          fi
