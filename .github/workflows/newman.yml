@@ -16,29 +16,18 @@ jobs:
           node-version: 22
 
       - name: Install deps
-        run: |
-          npm ci || npm install
-          node -v
-          npm -v
-          npm list --depth=0 || true
+        run: npm ci || npm install
 
-      - name: Prepare Prisma (sqlite fallback)
-        env:
-          DATABASE_URL: "file:./dev.db"
-        run: |
-          npx prisma generate
-          # migration이 없으면 db push로 스키마 반영
-          npx prisma migrate deploy || npx prisma db push
+      # --- 🔑 Prisma 단계는 완전히 Skip (CI smoke에 불필요) ---
+      - name: Skip Prisma
+        run: echo "Skipping Prisma for CI smoke tests"
 
       - name: Start API (bg) and wait for /health
         env:
           PORT: "3000"
-          DATABASE_URL: "file:./dev.db"
         run: |
           set -e
-          echo "Starting project server: server/server.js"
           node server/server.js & echo $! > api.pid
-          # wait-on으로 최대 60초 대기
           npx wait-on -t 60000 http://127.0.0.1:3000/health
 
       - name: Install Newman
