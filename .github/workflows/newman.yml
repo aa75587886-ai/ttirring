@@ -1,4 +1,4 @@
-﻿name: CI - newman
+name: CI - newman
 on:
   push:
   pull_request:
@@ -17,9 +17,14 @@ jobs:
       - run: npm ci || npm install
       - run: npx prisma generate --schema prisma/schema.ci.prisma
       - run: npx prisma db push --schema prisma/schema.ci.prisma --accept-data-loss
-      - run: |
-          node server/server.js &
-          npx wait-on -t 20000 http://127.0.0.1:3000/health
-      - run: npx newman run tests/ttirring.postman_collection.json
-
-
+      - name: Start server (auto-detect entry) and wait for /health
+        run: |
+          set -e
+          entry=""
+          for f in server/server.js server.js app.js index.js dist/server.js; do
+            if [ -f "$f" ]; then entry="$f"; break; fi
+          done
+          if [ -z "$entry" ]; then echo "No server entry found"; ls -la; exit 1; fi
+          node "$entry" &
+          npx wait-on -t 30000 http://127.0.0.1:3000/health
+      - run: npx newman run tests/ttirring.postman_collection.json --env-var="baseUrl=http://127.0.0.1:3000"
