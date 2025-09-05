@@ -1,0 +1,328 @@
+﻿<!doctype html>
+<html lang="ko"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>띠링 — 채널 요약 · Top Drivers · 일별 요약</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:#f7f7f8;color:#111;margin:0}
+  .wrap{max-width:1200px;margin:24px auto;padding:0 16px}
+  .row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:12px;align-items:end}
+  .card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:16px}
+  .btn{background:#111;color:#fff;border:none;border-radius:10px;padding:10px 14px;cursor:pointer}
+  .btn:disabled{opacity:.6;cursor:not-allowed}
+  .btn-outline{background:#fff;color:#111;border:1px solid #d1d5db}
+  .ipt{width:100%;border:1px solid #d1d5db;border-radius:10px;padding:8px 10px}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:10px;border-bottom:1px solid #eee;text-align:left;font-size:14px}
+  th.num, td.num{text-align:right}
+  .muted{color:#6b7280;font-size:12px}
+  .stat{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-top:12px}
+  .stat .card{padding:12px}
+  .stat .label{font-size:12px;color:#6b7280}
+  .stat .value{font-size:18px;font-weight:700}
+  .sec-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .bar{height:10px;background:#e5e7eb;border-radius:6px;overflow:hidden}
+  .bar > div{height:10px;background:#111}
+</style>
+</head><body>
+<div class="wrap">
+  <h2 style="margin:0 0 12px 0">띠링 — 대시보드</h2>
+  <div class="muted">KST 기준. 버튼 한 번으로 불러오기/CSV 저장.</div>
+
+  <div class="card" style="margin-top:16px">
+    <div class="row">
+      <label>Base URL
+        <input id="baseUrl" class="ipt" value="http://127.0.0.1:3100" />
+      </label>
+      <label>From (KST)
+        <input id="from" type="date" class="ipt" />
+      </label>
+      <label>To (KST)
+        <input id="to" type="date" class="ipt" />
+      </label>
+      <label>채널 (비우면 전체)
+        <input id="channelId" class="ipt" placeholder="예: CH-02" />
+      </label>
+      <div>
+        <label style="display:flex;gap:8px;align-items:center;">
+          <input id="adj" type="checkbox" checked />
+          <span>조정 포함</span>
+        </label>
+        <label style="display:flex;gap:8px;align-items:center;margin-top:8px">
+          <span class="muted">Top N</span>
+          <input id="topN" class="ipt" type="number" value="10" min="1" style="width:90px"/>
+        </label>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+      <button id="btnSummary" class="btn">채널 요약 불러오기</button>
+      <button id="btnTop" class="btn btn-outline">Top Drivers 불러오기</button>
+      <button id="btnDaily" class="btn btn-outline">일별 요약 불러오기</button>
+    </div>
+  </div>
+
+  <div id="error" class="card" style="display:none; margin-top:12px; border-color:#fecaca; background:#fef2f2; color:#991b1b"></div>
+
+  <!-- 채널 요약 -->
+  <div class="card" style="margin-top:12px">
+    <div class="sec-head">
+      <div>
+        <div style="font-weight:700">채널 요약</div>
+        <div class="muted">/v1/reports/channel-summary</div>
+      </div>
+      <button id="csvSummary" class="btn btn-outline" disabled>CSV 내보내기</button>
+    </div>
+
+    <div id="stats" class="stat" style="display:none">
+      <div class="card"><div class="label">Jobs</div><div id="sJobs" class="value">-</div></div>
+      <div class="card"><div class="label">Amount</div><div id="sAmt" class="value">-</div></div>
+      <div class="card"><div class="label">Driver Payout</div><div id="sDrv" class="value">-</div></div>
+      <div class="card"><div class="label">Platform Fee</div><div id="sFee" class="value">-</div></div>
+      <div class="card" id="waBox" style="display:none"><div class="label">Wallet Adjustments</div><div id="sAdj" class="value">-</div></div>
+      <div class="card" id="netBox" style="display:none"><div class="label">Net Amount</div><div id="sNet" class="value">-</div></div>
+    </div>
+
+    <div style="overflow:auto; margin-top:10px">
+      <table id="tblSummary">
+        <thead>
+          <tr>
+            <th>Channel</th>
+            <th class="num">Amount</th>
+            <th class="num">Driver</th>
+            <th class="num">Fee</th>
+            <th class="num" id="thAdj" style="display:none">Wallet Adj</th>
+            <th class="num" id="thNet" style="display:none">Net</th>
+          </tr>
+        </thead>
+        <tbody id="rowsSummary"><tr><td colspan="6" class="muted">데이터 없음</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Top Drivers -->
+  <div class="card" style="margin-top:12px">
+    <div class="sec-head">
+      <div>
+        <div style="font-weight:700">Top Drivers</div>
+        <div class="muted">/v1/reports/top-drivers</div>
+      </div>
+      <button id="csvTop" class="btn btn-outline" disabled>CSV 내보내기</button>
+    </div>
+    <div style="overflow:auto">
+      <table id="tblTop">
+        <thead>
+          <tr>
+            <th>Driver</th>
+            <th class="num">Jobs</th>
+            <th class="num">Amount</th>
+            <th class="num">Driver Payout</th>
+            <th class="num">Fee</th>
+          </tr>
+        </thead>
+        <tbody id="rowsTop"><tr><td colspan="5" class="muted">데이터 없음</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 일별 요약 -->
+  <div class="card" style="margin-top:12px">
+    <div class="sec-head">
+      <div>
+        <div style="font-weight:700">일별 요약</div>
+        <div class="muted">/v1/reports/daily-summary</div>
+      </div>
+      <button id="csvDaily" class="btn btn-outline" disabled>CSV 내보내기</button>
+    </div>
+    <div style="overflow:auto">
+      <table id="tblDaily">
+        <thead>
+          <tr>
+            <th>Day</th>
+            <th class="num">Jobs</th>
+            <th class="num">Amount</th>
+            <th class="num">Driver</th>
+            <th class="num">Fee</th>
+            <th style="width:220px">그래프</th>
+          </tr>
+        </thead>
+        <tbody id="rowsDaily"><tr><td colspan="6" class="muted">데이터 없음</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const $ = (id)=>document.getElementById(id);
+  const pad = (n)=>String(n).padStart(2,'0');
+  function setDefaultDates(){
+    const now = new Date();
+    const d2 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const d0 = new Date(d2.getTime() - 2*24*3600*1000);
+    $('from').value = d0.toISOString().slice(0,10);
+    $('to').value   = d2.toISOString().slice(0,10);
+  }
+  function kstIso(day,end=false){ if(!day) return null; return day + (end?'T23:59:59+09:00':'T00:00:00+09:00'); }
+  function fmt(n){ return Number(n||0).toLocaleString('ko-KR'); }
+  function showErr(e){ $('error').style.display='block'; $('error').textContent='오류: ' + (e.message||e); }
+
+  function params(){
+    const base = $('baseUrl').value.replace(/\/$/,'');
+    const qs = new URLSearchParams();
+    qs.set('from', kstIso($('from').value,false));
+    qs.set('to',   kstIso($('to').value,true));
+    const ch = $('channelId').value.trim();
+    if (ch) qs.set('channelId', ch);
+    return { base, qs, ch };
+  }
+
+  // 채널 요약
+  async function loadSummary(){
+    try{
+      $('error').style.display='none';
+      $('csvSummary').disabled = true;
+      $('rowsSummary').innerHTML = '<tr><td class="muted" colspan="6">로딩중…</td></tr>';
+      $('stats').style.display='none';
+      $('thAdj').style.display = $('thNet').style.display = 'none';
+
+      const { base, qs } = params();
+      if ($('adj').checked) qs.set('includeAdjustments','true');
+      const url = base + '/v1/reports/channel-summary?' + qs.toString();
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      const j = await r.json();
+
+      $('stats').style.display='grid';
+      $('sJobs').textContent = fmt(j?.totals?.jobs);
+      $('sAmt').textContent  = fmt(j?.totals?.amount);
+      $('sDrv').textContent  = fmt(j?.totals?.driverPayout);
+      $('sFee').textContent  = fmt(j?.totals?.platformFee);
+      if (j?.includeAdjustments && j?.totalsNet){
+        $('waBox').style.display='block';
+        $('netBox').style.display='block';
+        $('thAdj').style.display='table-cell';
+        $('thNet').style.display='table-cell';
+        $('sAdj').textContent = fmt(j.totalsNet.walletAdjustments);
+        $('sNet').textContent = fmt(j.totalsNet.netAmount);
+      }else{
+        $('waBox').style.display='none';
+        $('netBox').style.display='none';
+      }
+
+      const list = j?.channels ?? [];
+      $('rowsSummary').innerHTML = list.length ? '' : '<tr><td class="muted" colspan="6">데이터 없음</td></tr>';
+      list.forEach(c=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${c.channelId||''}</td>
+          <td class="num">${fmt(c.amount)}</td>
+          <td class="num">${fmt(c.driverPayout)}</td>
+          <td class="num">${fmt(c.platformFee)}</td>
+          ${$('adj').checked ? `<td class="num">${fmt(c.walletAdjustments||0)}</td><td class="num"><b>${fmt(c.netAmount||c.amount)}</b></td>` : ''}
+        `;
+        $('rowsSummary').appendChild(tr);
+      });
+
+      $('csvSummary').disabled = !(list.length);
+      $('csvSummary').onclick = ()=>{
+        const rows = list.map(c=>({
+          channelId:c.channelId, amount:c.amount, driverPayout:c.driverPayout, platformFee:c.platformFee,
+          walletAdjustments: c.walletAdjustments ?? 0, netAmount: c.netAmount ?? c.amount
+        }));
+        downloadCsv(`channel_summary_${$('channelId').value||'ALL'}_${$('from').value}_to_${$('to').value}_KST_adj-${$('adj').checked}.csv`, rows);
+      };
+    }catch(e){ showErr(e); }
+  }
+
+  // Top Drivers
+  async function loadTop(){
+    try{
+      $('error').style.display='none';
+      $('csvTop').disabled = true;
+      $('rowsTop').innerHTML = '<tr><td class="muted" colspan="5">로딩중…</td></tr>';
+      const { base, qs } = params();
+      const n = Math.max(1, Number($('topN').value||10));
+      qs.set('limit', n);
+      const url = base + '/v1/reports/top-drivers?' + qs.toString();
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      const j = await r.json();
+      const list = j?.drivers ?? [];
+      $('rowsTop').innerHTML = list.length ? '' : '<tr><td class="muted" colspan="5">데이터 없음</td></tr>';
+      list.forEach(d=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${d.driverId||''}</td>
+          <td class="num">${fmt(d.jobs)}</td>
+          <td class="num">${fmt(d.amount)}</td>
+          <td class="num">${fmt(d.driverPayout)}</td>
+          <td class="num">${fmt(d.platformFee)}</td>
+        `;
+        $('rowsTop').appendChild(tr);
+      });
+
+      $('csvTop').disabled = !(list.length);
+      $('csvTop').onclick = ()=>{
+        const rows = list.map(d=>({
+          driverId:d.driverId, jobs:d.jobs, amount:d.amount, driverPayout:d.driverPayout, platformFee:d.platformFee
+        }));
+        downloadCsv(`top_drivers_${$('channelId').value||'ALL'}_${$('from').value}_to_${$('to').value}_KST_top${n}.csv`, rows);
+      };
+    }catch(e){ showErr(e); }
+  }
+
+  // 일별 요약
+  async function loadDaily(){
+    try{
+      $('error').style.display='none';
+      $('csvDaily').disabled = true;
+      $('rowsDaily').innerHTML = '<tr><td class="muted" colspan="6">로딩중…</td></tr>';
+      const { base, qs } = params();
+      const url = base + '/v1/reports/daily-summary?' + qs.toString();
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      const j = await r.json();
+      const list = j?.series ?? [];
+      $('rowsDaily').innerHTML = list.length ? '' : '<tr><td class="muted" colspan="6">데이터 없음</td></tr>';
+
+      const maxAmt = Math.max(...list.map(x=>Number(x.amount||0)), 1);
+      list.forEach(d=>{
+        const w = Math.round((Number(d.amount||0) / maxAmt) * 100);
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${d.day||''}</td>
+          <td class="num">${fmt(d.jobs)}</td>
+          <td class="num">${fmt(d.amount)}</td>
+          <td class="num">${fmt(d.driverPayout)}</td>
+          <td class="num">${fmt(d.platformFee)}</td>
+          <td><div class="bar"><div style="width:${w}%"></div></div></td>
+        `;
+        $('rowsDaily').appendChild(tr);
+      });
+
+      $('csvDaily').disabled = !(list.length);
+      $('csvDaily').onclick = ()=>{
+        const rows = list.map(d=>({
+          day:d.day, jobs:d.jobs, amount:d.amount, driverPayout:d.driverPayout, platformFee:d.platformFee
+        }));
+        downloadCsv(`daily_summary_${$('channelId').value||'ALL'}_${$('from').value}_to_${$('to').value}_KST.csv`, rows);
+      };
+    }catch(e){ showErr(e); }
+  }
+
+  function downloadCsv(filename, rows){
+    const headers = Object.keys(rows[0]||{});
+    const esc = (v)=>String(v??'').replaceAll('"','""');
+    const body = [headers.join(',')].concat(rows.map(r=>headers.map(h=>`"${esc(r[h])}"`).join(','))).join('\n');
+    const blob = new Blob(["\ufeff"+body], {type:"text/csv;charset=utf-8;"});
+    const a = document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); URL.revokeObjectURL(a.href);
+  }
+
+  // 이벤트
+  $('btnSummary').addEventListener('click', loadSummary);
+  $('btnTop').addEventListener('click', loadTop);
+  $('btnDaily').addEventListener('click', loadDaily);
+  setDefaultDates();
+</script>
+</body></html>

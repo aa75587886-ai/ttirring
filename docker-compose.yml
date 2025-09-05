@@ -1,28 +1,25 @@
-services:
+﻿services:
   db:
-    image: postgres:15
-    container_name: ttirring-db
-    restart: always
+    image: postgres:16-alpine
+    container_name: ttirring-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ttirring
-      POSTGRES_PASSWORD: ttirring_pw
+      POSTGRES_PASSWORD: ttirringpw
       POSTGRES_DB: ttirring
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - db_data:/var/lib/postgresql/data
 
-  pgadmin:
-    image: dpage/pgadmin4:8
-    container_name: ttirring-pgadmin
-    restart: always
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@ttirring.com   # ← 변경
-      PGADMIN_DEFAULT_PASSWORD: admin1234
+  adminer:
+    image: adminer:latest
+    container_name: ttirring-adminer
+    restart: unless-stopped
     ports:
-      - "5050:80"
+      - "8080:8080"
     depends_on:
       - db
 
 volumes:
-  pgdata:
+  db_data:

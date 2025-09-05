@@ -1,0 +1,25 @@
+{
+  "name": "ttirring",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node server/server.js",
+    "dev:nodemon": "nodemon server/server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev --name init_bootstrap",
+    "studio": "prisma studio",
+    "seed": "node prisma/seed.mjs",
+    "reset": "prisma migrate reset -f && npm run seed"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.15.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "swagger-ui-express": "^5.0.1",
+    "yamljs": "^0.3.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10",
+    "prisma": "^6.15.0"
+  }
+}

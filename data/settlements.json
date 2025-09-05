@@ -1,0 +1,98 @@
+{
+  "items": [
+    {
+      "settleId": "S-1756994069162",
+      "jobId": "J-COMP-1",
+      "channelId": "CH-02",
+      "driverId": "DR-01",
+      "amount": 18000,
+      "driverPayout": 14400,
+      "platformFee": 3600,
+      "settledAt": "2025-09-04T13:54:29.162Z",
+      "meta": null
+    },
+    {
+      "settleId": "S-1756889570228",
+      "jobId": "J901",
+      "channelId": "CH-02",
+      "driverId": "DR-01",
+      "amount": 12000,
+      "driverPayout": 9600,
+      "platformFee": 2400,
+      "settledAt": "2025-09-03T08:52:50.228Z",
+      "meta": {
+        "note": "테스트 정산"
+      }
+    },
+    {
+      "settleId": "S-1756883288587",
+      "jobId": "J0903-ZJ1",
+      "channelId": "CH-02",
+      "driverId": "DR-01",
+      "amount": 20000,
+      "driverPayout": 16000,
+      "platformFee": 4000,
+      "settledAt": "2025-09-03T07:08:08.587Z",
+      "meta": {
+        "note": "e2e test"
+      }
+    },
+    {
+      "settleId": "S-1756866318386",
+      "jobId": "J300",
+      "channelId": "CH-02",
+      "driverId": "DR-01",
+      "amount": 12000,
+      "driverPayout": 9600,
+      "platformFee": 2400,
+      "settledAt": "2025-09-03T02:25:18.387Z",
+      "meta": null
+    },
+    {
+      "settleId": "S-1756804967609",
+      "jobId": "J200",
+      "channelId": "CH-02",
+      "driverId": "DR-01",
+      "amount": 15000,
+      "driverPayout": 12000,
+      "platformFee": 3000,
+      "settledAt": "2025-09-02T09:22:47.609Z",
+      "meta": {
+        "note": "J200 ?뚯뒪???꾨즺"
+      }
+    },
+    {
+      "settleId": "S-1756717445217",
+      "jobId": "J200",
+      "channelId": "CH-TEST",
+      "driverId": "DR-99",
+      "amount": 15000,
+      "driverPayout": 12000,
+      "platformFee": 3000,
+      "settledAt": "2025-09-01T09:04:05.217Z",
+      "meta": null
+    },
+    {
+      "settleId": "S-1756715533654",
+      "jobId": "J0901",
+      "channelId": "CH-02",
+      "driverId": "DR-01",
+      "amount": 18000,
+      "driverPayout": 14400,
+      "platformFee": 3600,
+      "settledAt": "2025-09-01T08:32:13.654Z",
+      "meta": null
+    },
+    {
+      "settleId": "S-1756714945986",
+      "jobId": "J100",
+      "channelId": "CH-02",
+      "driverId": "DR-01",
+      "amount": 20000,
+      "driverPayout": 16000,
+      "platformFee": 4000,
+      "settledAt": "2025-09-01T08:22:25.986Z",
+      "meta": null
+    }
+  ]
+}

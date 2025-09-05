@@ -1,0 +1,53 @@
+{
+  "byChannel": {
+    "CH-02": [
+      {
+        "jobId": "J100",
+        "driverId": "DR-01",
+        "status": "COMPLETED"
+      },
+      {
+        "jobId": "J0901",
+        "driverId": "DR-01",
+        "status": "COMPLETED"
+      },
+      {
+        "jobId": "J200",
+        "driverId": "DR-01",
+        "status": "COMPLETED"
+      },
+      {
+        "jobId": "J201",
+        "driverId": "DR-01",
+        "status": "PENDING"
+      },
+      {
+        "jobId": "J300",
+        "driverId": "DR-01",
+        "status": "COMPLETED"
+      },
+      {
+        "jobId": "J0903-ZJ1",
+        "driverId": "DR-01",
+        "status": "COMPLETED"
+      },
+      {
+        "jobId": "J901",
+        "driverId": "DR-01",
+        "status": "COMPLETED"
+      },
+      {
+        "jobId": "J-COMP-1",
+        "driverId": "DR-01",
+        "status": "COMPLETED"
+      }
+    ],
+    "CH-TEST": [
+      {
+        "jobId": "J200",
+        "driverId": "DR-99",
+        "status": "COMPLETED"
+      }
+    ]
+  }
+}

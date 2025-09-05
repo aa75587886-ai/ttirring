@@ -1,0 +1,176 @@
+﻿<!doctype html>
+<html lang="ko"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>띠링 — 채널 요약(조정 포함)</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; background:#f7f7f8; color:#111; margin:0}
+  .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
+  .row{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;align-items:end}
+  .card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:16px}
+  .btn{background:#111;color:#fff;border:none;border-radius:10px;padding:10px 14px;cursor:pointer}
+  .btn:disabled{opacity:.6;cursor:not-allowed}
+  .ipt{width:100%;border:1px solid #d1d5db;border-radius:10px;padding:8px 10px}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:10px;border-bottom:1px solid #eee;text-align:left;font-size:14px}
+  th.num, td.num{text-align:right}
+  .muted{color:#6b7280;font-size:12px}
+  .stat{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-top:12px}
+  .stat .card{padding:12px}
+  .stat .label{font-size:12px;color:#6b7280}
+  .stat .value{font-size:18px;font-weight:700}
+</style>
+</head><body>
+<div class="wrap">
+  <h2 style="margin:0 0 12px 0">띠링 — 채널 요약</h2>
+  <div class="muted">KST 기준. 버튼 한 번으로 불러오기/CSV 저장 가능.</div>
+
+  <div class="card" style="margin-top:16px">
+    <div class="row">
+      <label>Base URL
+        <input id="baseUrl" class="ipt" value="http://127.0.0.1:3100" />
+      </label>
+      <label>From (KST)
+        <input id="from" type="date" class="ipt" />
+      </label>
+      <label>To (KST)
+        <input id="to" type="date" class="ipt" />
+      </label>
+      <div>
+        <label style="display:flex;gap:8px;align-items:center;">
+          <input id="adj" type="checkbox" checked />
+          <span>조정 포함</span>
+        </label>
+        <button id="load" class="btn" style="margin-top:8px;width:100%">불러오기</button>
+      </div>
+      <label style="grid-column: 1 / -1; margin-top:8px;">채널 (비우면 전체)
+        <input id="channelId" class="ipt" placeholder="예: CH-02" />
+      </label>
+    </div>
+  </div>
+
+  <div id="error" class="card" style="display:none; margin-top:12px; border-color:#fecaca; background:#fef2f2; color:#991b1b"></div>
+
+  <div id="stats" class="stat" style="display:none; margin-top:12px">
+    <div class="card"><div class="label">Jobs</div><div id="sJobs" class="value">-</div></div>
+    <div class="card"><div class="label">Amount</div><div id="sAmt" class="value">-</div></div>
+    <div class="card"><div class="label">Driver Payout</div><div id="sDrv" class="value">-</div></div>
+    <div class="card"><div class="label">Platform Fee</div><div id="sFee" class="value">-</div></div>
+    <div class="card" id="waBox" style="display:none"><div class="label">Wallet Adjustments</div><div id="sAdj" class="value">-</div></div>
+    <div class="card" id="netBox" style="display:none"><div class="label">Net Amount</div><div id="sNet" class="value">-</div></div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div class="muted">채널별 요약</div>
+      <button id="csv" class="btn" disabled>CSV 내보내기</button>
+    </div>
+    <div style="overflow:auto">
+      <table id="tbl">
+        <thead>
+          <tr>
+            <th>Channel</th>
+            <th class="num">Amount</th>
+            <th class="num">Driver</th>
+            <th class="num">Fee</th>
+            <th class="num" id="thAdj" style="display:none">Wallet Adj</th>
+            <th class="num" id="thNet" style="display:none">Net</th>
+          </tr>
+        </thead>
+        <tbody id="rows"><tr><td colspan="6" class="muted">데이터 없음</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+  const $ = (id)=>document.getElementById(id);
+  const pad = (n)=>String(n).padStart(2,'0');
+  function setDefaultDates(){
+    const now = new Date();
+    const d2 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const d0 = new Date(d2.getTime() - 2*24*3600*1000);
+    $('from').value = d0.toISOString().slice(0,10);
+    $('to').value   = d2.toISOString().slice(0,10);
+  }
+  function kstIso(day,end=false){ if(!day) return null; return day + (end?'T23:59:59+09:00':'T00:00:00+09:00'); }
+  function fmt(n){ return Number(n||0).toLocaleString('ko-KR'); }
+
+  async function loadSummary(){
+    $('error').style.display='none';
+    $('csv').disabled = true;
+    $('rows').innerHTML = '<tr><td class="muted" colspan="6">로딩중</td></tr>';
+    $('sJobs').textContent = $('sAmt').textContent = $('sDrv').textContent = $('sFee').textContent='-';
+    $('waBox').style.display = $('netBox').style.display = 'none';
+    $('thAdj').style.display = $('thNet').style.display = 'none';
+    try{
+      const base = $('baseUrl').value.replace(/\/$/,'');
+      const qs = new URLSearchParams();
+      qs.set('from', kstIso($('from').value, false));
+      qs.set('to',   kstIso($('to').value, true));
+      if ($('adj').checked) qs.set('includeAdjustments','true');
+      const ch = $('channelId').value.trim(); if (ch) qs.set('channelId', ch);
+      const url = base + '/v1/reports/channel-summary?' + qs.toString();
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('HTTP '+r.status);
+      const j = await r.json();
+
+      // 합계
+      $('stats').style.display='grid';
+      $('sJobs').textContent = fmt(j?.totals?.jobs);
+      $('sAmt').textContent  = fmt(j?.totals?.amount);
+      $('sDrv').textContent  = fmt(j?.totals?.driverPayout);
+      $('sFee').textContent  = fmt(j?.totals?.platformFee);
+      if (j?.includeAdjustments && j?.totalsNet){
+        $('waBox').style.display='block';
+        $('netBox').style.display='block';
+        $('thAdj').style.display='table-cell';
+        $('thNet').style.display='table-cell';
+        $('sAdj').textContent = fmt(j.totalsNet.walletAdjustments);
+        $('sNet').textContent = fmt(j.totalsNet.netAmount);
+      }
+
+      // 표
+      const list = j?.channels ?? [];
+      $('rows').innerHTML = list.length ? '' : '<tr><td class="muted" colspan="6">데이터 없음</td></tr>';
+      list.forEach(c=>{
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${c.channelId||''}</td>
+          <td class="num">${fmt(c.amount)}</td>
+          <td class="num">${fmt(c.driverPayout)}</td>
+          <td class="num">${fmt(c.platformFee)}</td>
+          ${$('adj').checked ? `<td class="num">${fmt(c.walletAdjustments||0)}</td><td class="num"><b>${fmt(c.netAmount||c.amount)}</b></td>` : ''}
+        `;
+        $('rows').appendChild(tr);
+      });
+
+      // CSV 버튼
+      $('csv').disabled = !(list.length);
+      $('csv').onclick = ()=>{
+        const rows = list.map(c=>({
+          channelId:c.channelId,
+          amount:c.amount, driverPayout:c.driverPayout, platformFee:c.platformFee,
+          walletAdjustments: c.walletAdjustments ?? 0,
+          netAmount: c.netAmount ?? c.amount
+        }));
+        const hdr = Object.keys(rows[0]||{});
+        const esc = (v)=>String(v??'').replaceAll('"','""');
+        const body = [hdr.join(',')].concat(rows.map(r=>hdr.map(h=>`"${esc(r[h])}"`).join(','))).join('\n');
+        const blob = new Blob(["\ufeff"+body], {type:"text/csv;charset=utf-8;"});
+        const a = document.createElement('a'); a.href=URL.createObjectURL(blob);
+        const chName = ch || 'ALL';
+        a.download = `channel_summary_${chName}_${$('from').value}_to_${$('to').value}_KST_adj-${$('adj').checked}.csv`;
+        a.click(); URL.revokeObjectURL(a.href);
+      };
+    }catch(e){
+      $('error').style.display='block';
+      $('error').textContent = '오류: ' + (e.message||e);
+      $('rows').innerHTML = '<tr><td class="muted" colspan="6">로드 실패</td></tr>';
+    }
+  }
+
+  $('load').addEventListener('click', loadSummary);
+  setDefaultDates();
+</script>
+</body></html>
