@@ -252,3 +252,8 @@ if (require.main === module) {
   });
 }
 module.exports = app;
+
+// mount channel summary (adjustFilter=manual)
+const channelSummary = require('./routes/channelSummary');
+app.use('/v1', channelSummary);
+
