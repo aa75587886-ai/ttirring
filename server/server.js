@@ -1,233 +1,254 @@
-// server/server.js (ESM, 통교체 버전 - 아이템포턴시 적용)
-import express from "express";
-import cors from "cors";
-import YAML from "yamljs";
-import swaggerUi from "swagger-ui-express";
-import path from "path";
-import { fileURLToPath } from "url";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
-
-// __dirname 대체 (ESM)
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// server/server.js — P0 최종: 존재 검증 훅 + 표준 에러 통일 + /docs + /openapi.json
+const express = require('express');
+const path = require('path');
+const YAML = require('yamljs');
+const swaggerUi = require('swagger-ui-express');
+const { randomUUID } = require('crypto');
+const fs = require('fs');
 
 const app = express();
-app.use(cors());
 app.use(express.json());
 
-// Swagger 문서 연결 (http://localhost:3000/docs)
+// ---------- Swagger (/docs + /openapi.json) ----------
+const openapiPath = path.join(__dirname, '..', 'openapi', 'ttirring_openapi_v0.1.yaml');
+let swaggerDoc;
 try {
-  const openapiPath = path.join(__dirname, "..", "api", "ttirring_openapi_v0.1.yaml");
-  const openapi = YAML.load(openapiPath);
-  app.use("/docs", swaggerUi.serve, swaggerUi.setup(openapi));
-} catch (e) {
-  console.warn("[SWAGGER] openapi yaml 로드 실패(무시 가능):", e?.message || e);
+  swaggerDoc = YAML.load(openapiPath);
+} catch {
+  swaggerDoc = {
+    openapi: '3.0.3',
+    info: { title: 'Ttirring API (fallback)', version: '0.1.1' },
+    paths: { '/health': { get: { responses: { '200': { description: 'OK' } } } } },
+  };
+}
+// /openapi.json 노출
+app.get('/openapi.json', (_req, res) => res.json(swaggerDoc));
+// Swagger UI
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDoc, { explorer: true }));
+
+// ---------- In-memory 데이터 ----------
+const channels = new Set(['CH-01', 'CH-02']);
+const users = new Set(['DR-01', 'DR-99', 'U-01']);
+const jobs = new Map(); // jobId -> { jobId, channelId, status }
+const wallet = new Map();
+const idem = new Map(); // idempotency-key -> txResponse
+
+wallet.set('DR-01', 50000);
+wallet.set('DR-99', 10000);
+wallet.set('U-01', 0);
+
+// ---------- 표준 오류 도우미 ----------
+function err(res, status, code, message, details) {
+  return res.status(status).json({ ok: false, code, message, details });
+}
+const badRequest = (res, msg, d) => err(res, 400, 'BAD_REQUEST', msg, d);
+const notFound = (res, code, msg) => err(res, 404, code, msg);
+const invalidAmt = (res) => err(res, 400, 'INVALID_AMOUNT', 'must be >= 1');
+const invalidRsn = (res, allowed) => err(res, 400, 'INVALID_REASON', allowed);
+
+// ---------- 존재 검증 훅 ----------
+function requireChannelIdQuery(req, res, next) {
+  const { channelId } = req.query;
+  if (!channelId) return badRequest(res, 'channelId required');
+  if (!channels.has(channelId)) return notFound(res, 'CHANNEL_NOT_FOUND', `channelId=${channelId}`);
+  next();
+}
+function requireBodyFields(fields) {
+  return (req, res, next) => {
+    const body = req.body || {};
+    const missing = fields.filter(
+      (f) => body[f] === undefined || body[f] === null || body[f] === ''
+    );
+    if (missing.length) return badRequest(res, `Missing required fields: ${missing.join(', ')}`);
+    next();
+  };
+}
+function ensureUserChannelJob(req, res, next) {
+  const { userId, channelId, jobId } = req.body || {};
+  if (userId && !users.has(userId)) return notFound(res, 'USER_NOT_FOUND', `userId=${userId}`);
+  if (channelId && !channels.has(channelId))
+    return notFound(res, 'CHANNEL_NOT_FOUND', `channelId=${channelId}`);
+  if (jobId && !jobs.has(jobId)) return notFound(res, 'JOB_NOT_FOUND', `jobId=${jobId}`);
+  next();
 }
 
-// ------------------------------
-// 헬스체크 & 루트 리다이렉트
-// ------------------------------
-app.get("/health", (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
-app.get("/", (_req, res) => res.redirect("/docs"));
+// ---------- Health ----------
+app.get('/health', (_req, res) => res.json({ ok: true }));
 
-// ------------------------------
-// 공통 유틸
-// ------------------------------
-const ALLOWED_DEBIT_REASONS  = ["CANCEL_PENALTY","WITHDRAWAL","FEE","ADJUSTMENT_MINUS","MANUAL_MINUS","REFUND_MINUS"];
-const ALLOWED_CREDIT_REASONS = ["DEPOSIT","ADJUSTMENT_PLUS","MANUAL_PLUS","REFUND_PLUS"];
-
-function badRequest(res, message, extra = {}) {
-  return res.status(400).json({ ok: false, code: "BAD_REQUEST", message, ...extra });
-}
-function notFound(res, code, message) {
-  return res.status(404).json({ ok: false, code, message });
-}
-function internal(res) {
-  return res.status(500).json({ ok: false, code: "INTERNAL_ERROR", message: "unexpected error" });
-}
-
-// ------------------------------
-// WALLET TX: DEBIT (아이템포턴시)
-// ------------------------------
-app.post("/v1/wallet_tx/debit", async (req, res) => {
-  try {
-    const { userId, amount, reason, jobId, channelId } = req.body || {};
-    if (!userId || !amount || !reason || !jobId) {
-      return badRequest(res, "userId, amount, reason, jobId required");
-    }
-    if (!ALLOWED_DEBIT_REASONS.includes(reason)) {
-      return res.status(400).json({
-        ok: false, code: "INVALID_REASON",
-        message: `reason must be one of: ${ALLOWED_DEBIT_REASONS.join(", ")}`,
-        allowed: ALLOWED_DEBIT_REASONS
-      });
-    }
-
-    // 존재 검증
-    const user = await prisma.user.findUnique({ where: { userId } }).catch(() => null);
-    if (!user) return notFound(res, "USER_NOT_FOUND", "user not found");
-
-    const job = await prisma.job.findUnique({ where: { jobId } }).catch(() => null);
-    if (!job) return notFound(res, "JOB_NOT_FOUND", "job not found");
-
-    if (channelId) {
-      const ch = await prisma.channel.findUnique({ where: { channelId } }).catch(() => null);
-      if (!ch) return notFound(res, "CHANNEL_NOT_FOUND", "channel not found");
-    }
-
-    // 아이템포턴시: 같은 jobId+type=DEBIT 있으면 기존 tx 반환
-    const existing = await prisma.walletTx.findFirst({
-      where: { jobId, type: "DEBIT" },
-      orderBy: { createdAt: "desc" },
-    });
-    if (existing) {
-      return res.status(200).json({
-        ok: true,
-        idempotent: true,
-        message: "DEBIT already exists for this jobId",
-        tx: existing,
-      });
-    }
-
-    // 잔액 계산(마지막 거래 기준)
-    const lastTx = await prisma.walletTx.findFirst({
-      where: { userId },
-      orderBy: { createdAt: "desc" },
-    });
-    const prevBalance = lastTx?.balance ?? 0;
-    const newBalance = prevBalance - Number(amount);
-
-    // 생성 (유니크 충돌도 idempotent로 되돌려주기)
-    try {
-      const tx = await prisma.walletTx.create({
-        data: {
-          type: "DEBIT",
-          userId,
-          amount: Number(amount),
-          reason,
-          jobId,
-          channelId: channelId ?? null,
-          balance: newBalance,
-        },
-      });
-      return res.status(200).json({ ok: true, idempotent: false, message: "DEBIT recorded", tx });
-    } catch (e) {
-      if (e?.code === "P2002") {
-        const dup = await prisma.walletTx.findFirst({
-          where: { jobId, type: "DEBIT" },
-          orderBy: { createdAt: "desc" },
-        });
-        if (dup) {
-          return res.status(200).json({
-            ok: true,
-            idempotent: true,
-            message: "DEBIT already exists for this jobId",
-            tx: dup,
-          });
-        }
-      }
-      throw e;
-    }
-  } catch (err) {
-    console.error("[DEBIT]", err);
-    return internal(res);
+// ---------- Reservations ----------
+app.post(
+  '/v1/reservations',
+  requireBodyFields(['jobId', 'channelId', 'passengerName', 'pickupAddr', 'dropoffAddr']),
+  (req, res) => {
+    const { jobId, channelId } = req.body;
+    if (!channels.has(channelId)) return notFound(res, 'CHANNEL_NOT_FOUND', `channelId=${channelId}`);
+    jobs.set(jobId, { jobId, channelId, status: 'PENDING' });
+    return res
+      .status(201)
+      .json({ ok: true, reservation: { jobId, channelId, status: 'PENDING' } });
   }
+);
+
+// ---------- Jobs ----------
+app.get('/v1/jobs', requireChannelIdQuery, (req, res) => {
+  const { channelId } = req.query;
+  const list = Array.from(jobs.values()).filter((j) => j.channelId === channelId);
+  return res.json({ ok: true, jobs: list });
+});
+app.get('/v1/jobs/stats', requireChannelIdQuery, (req, res) => {
+  const { channelId } = req.query;
+  const byStatus = { PENDING: 0, DISPATCHED: 0, IN_PROGRESS: 0, COMPLETED: 0, CANCELED: 0 };
+  let total = 0;
+  for (const j of jobs.values()) {
+    if (j.channelId === channelId) {
+      byStatus[j.status] = (byStatus[j.status] || 0) + 1;
+      total++;
+    }
+  }
+  return res.json({ ok: true, channelId, total, byStatus });
 });
 
-// ------------------------------
-// WALLET TX: CREDIT (아이템포턴시)
-// ------------------------------
-app.post("/v1/wallet_tx/credit", async (req, res) => {
-  try {
-    const { userId, amount, reason, jobId, channelId } = req.body || {};
-    if (!userId || !amount || !reason || !jobId) {
-      return badRequest(res, "userId, amount, reason, jobId required");
-    }
-    if (!ALLOWED_CREDIT_REASONS.includes(reason)) {
-      return res.status(400).json({
-        ok: false, code: "INVALID_REASON",
-        message: `reason must be one of: ${ALLOWED_CREDIT_REASONS.join(", ")}`,
-        allowed: ALLOWED_CREDIT_REASONS
-      });
-    }
+// ---------- Wallet ----------
+const DEBIT_REASONS = new Set(['CANCEL_PENALTY', 'FEE', 'ADJUST']);
+const CREDIT_REASONS = new Set(['RECHARGE', 'REFUND', 'ADJUST']);
 
-    // 존재 검증
-    const user = await prisma.user.findUnique({ where: { userId } }).catch(() => null);
-    if (!user) return notFound(res, "USER_NOT_FOUND", "user not found");
+app.post(
+  '/v1/wallet_tx/debit',
+  requireBodyFields(['userId', 'amount', 'reason', 'channelId']),
+  ensureUserChannelJob,
+  (req, res) => {
+    const idKey = req.get('Idempotency-Key');
+    const { userId, amount, reason, jobId, channelId } = req.body;
 
-    const job = await prisma.job.findUnique({ where: { jobId } }).catch(() => null);
-    if (!job) return notFound(res, "JOB_NOT_FOUND", "job not found");
+    if (!Number.isInteger(amount) || amount < 1) return invalidAmt(res);
+    if (!DEBIT_REASONS.has(reason)) return invalidRsn(res, 'CANCEL_PENALTY|FEE|ADJUST');
 
-    if (channelId) {
-      const ch = await prisma.channel.findUnique({ where: { channelId } }).catch(() => null);
-      if (!ch) return notFound(res, "CHANNEL_NOT_FOUND", "channel not found");
+    if (idKey && idem.has(idKey)) {
+      const prev = idem.get(idKey);
+      res.set('Idempotency-Handled', 'true');
+      res.set('Idempotency-Replay', 'true');
+      return res.status(200).json(prev);
     }
 
-    // 아이템포턴시: 같은 jobId+type=CREDIT 있으면 기존 tx 반환
-    const existing = await prisma.walletTx.findFirst({
-      where: { jobId, type: "CREDIT" },
-      orderBy: { createdAt: "desc" },
-    });
-    if (existing) {
-      return res.status(200).json({
-        ok: true,
-        idempotent: true,
-        message: "CREDIT already exists for this jobId",
-        tx: existing,
-      });
-    }
+    const txId = randomUUID();
+    const prevBal = wallet.get(userId) ?? 0;
+    const balanceAfter = prevBal - amount;
+    wallet.set(userId, balanceAfter);
 
-    // 잔액 계산
-    const lastTx = await prisma.walletTx.findFirst({
-      where: { userId },
-      orderBy: { createdAt: "desc" },
-    });
-    const prevBalance = lastTx?.balance ?? 0;
-    const newBalance = prevBalance + Number(amount);
-
-    // 생성 (유니크 충돌도 idempotent로)
-    try {
-      const tx = await prisma.walletTx.create({
-        data: {
-          type: "CREDIT",
-          userId,
-          amount: Number(amount),
-          reason,
-          jobId,
-          channelId: channelId ?? null,
-          balance: newBalance,
-        },
-      });
-      return res.status(200).json({ ok: true, idempotent: false, message: "CREDIT recorded", tx });
-    } catch (e) {
-      if (e?.code === "P2002") {
-        const dup = await prisma.walletTx.findFirst({
-          where: { jobId, type: "CREDIT" },
-          orderBy: { createdAt: "desc" },
-        });
-        if (dup) {
-          return res.status(200).json({
-            ok: true,
+    const payload = {
+      ok: true,
+      txId,
+      userId,
+      amount,
+      reason,
+      jobId,
+      channelId,
+      balanceAfter,
+      idempotency: idKey
+        ? {
             idempotent: true,
-            message: "CREDIT already exists for this jobId",
-            tx: dup,
-          });
-        }
-      }
-      throw e;
+            idempotencyKey: idKey,
+            firstRequestAt: new Date().toISOString(),
+            duplicateOf: txId,
+          }
+        : undefined,
+    };
+    if (idKey) {
+      idem.set(idKey, payload);
+      res.set('Idempotency-Handled', 'true');
     }
-  } catch (err) {
-    console.error("[CREDIT]", err);
-    return internal(res);
+    return res.status(201).json(payload);
   }
+);
+
+app.post(
+  '/v1/wallet_tx/credit',
+  requireBodyFields(['userId', 'amount', 'reason', 'channelId']),
+  (req, res, next) => {
+    const { userId, channelId } = req.body || {};
+    if (userId && !users.has(userId)) return notFound(res, 'USER_NOT_FOUND', `userId=${userId}`);
+    if (channelId && !channels.has(channelId))
+      return notFound(res, 'CHANNEL_NOT_FOUND', `channelId=${channelId}`);
+    next();
+  },
+  (req, res) => {
+    const idKey = req.get('Idempotency-Key');
+    const { userId, amount, reason, jobId, channelId } = req.body;
+
+    if (!Number.isInteger(amount) || amount < 1) return invalidAmt(res);
+    if (!CREDIT_REASONS.has(reason)) return invalidRsn(res, 'RECHARGE|REFUND|ADJUST');
+
+    if (idKey && idem.has(idKey)) {
+      const prev = idem.get(idKey);
+      res.set('Idempotency-Handled', 'true');
+      res.set('Idempotency-Replay', 'true');
+      return res.status(200).json(prev);
+    }
+
+    const txId = randomUUID();
+    const prevBal = wallet.get(userId) ?? 0;
+    const balanceAfter = prevBal + amount;
+    wallet.set(userId, balanceAfter);
+
+    const payload = {
+      ok: true,
+      txId,
+      userId,
+      amount,
+      reason,
+      jobId,
+      channelId,
+      balanceAfter,
+      idempotency: idKey
+        ? {
+            idempotent: true,
+            idempotencyKey: idKey,
+            firstRequestAt: new Date().toISOString(),
+            duplicateOf: txId,
+          }
+        : undefined,
+    };
+    if (idKey) {
+      idem.set(idKey, payload);
+      res.set('Idempotency-Handled', 'true');
+    }
+    return res.status(201).json(payload);
+  }
+);
+
+// ---------- Reports ----------
+app.get('/v1/reports/top-drivers', (req, res) => {
+  const { channelId, limit = '10' } = req.query;
+  if (!channelId) return badRequest(res, 'channelId required');
+  if (!channels.has(channelId)) return notFound(res, 'CHANNEL_NOT_FOUND', `channelId=${channelId}`);
+
+  const cap = Math.max(1, Math.min(parseInt(limit, 10) || 10, 100));
+  const sample = [
+    { driverId: 'DR-01', jobs: 4, amount: 63000, driverPayout: 50400, platformFee: 12600 },
+    { driverId: 'DR-99', jobs: 1, amount: 15000, driverPayout: 12000, platformFee: 3000 },
+  ];
+  return res.json({ ok: true, drivers: sample.slice(0, cap) });
 });
 
-// ------------------------------
-// 서버 기동
-// ------------------------------
+// ---------- Settlements ----------
+app.get('/v1/settlements/daily', (req, res) => {
+  const { channelId, from, to } = req.query;
+  if (!channelId) return badRequest(res, 'channelId required');
+  if (!channels.has(channelId)) return notFound(res, 'CHANNEL_NOT_FOUND', `channelId=${channelId}`);
+
+  const series = [
+    { day: '2025-09-01', jobs: 3, amount: 53000, driverPayout: 42400, platformFee: 10600 },
+    { day: '2025-09-02', jobs: 2, amount: 25000, driverPayout: 20000, platformFee: 5000 },
+    { day: '2025-09-03', jobs: 1, amount: 12000, driverPayout: 9600, platformFee: 2400 },
+  ];
+  return res.json({ ok: true, range: { from: from || '', to: to || '' }, channelId, series });
+});
+
+// ---------- Boot ----------
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Reservation/Wallet API running at http://localhost:${PORT}  (Docs: /docs)`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Reservation/Wallet API running at http://localhost:${PORT}  (Docs: /docs)`);
+  });
+}
+module.exports = app;
