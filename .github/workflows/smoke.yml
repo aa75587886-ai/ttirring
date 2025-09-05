@@ -1,0 +1,31 @@
+name: SMOKE - health
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PORT: 3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci || npm install
+      - run: npx prisma generate --schema prisma/schema.ci.prisma || echo "skip prisma generate"
+      - name: Start server and wait for /health
+        run: |
+          set -e
+          entry=""
+          for f in server/server.js server.js app.js index.js dist/server.js; do
+            if [ -f "$f" ]; then entry="$f"; break; fi
+          done
+          if [ -z "$entry" ]; then echo "No server entry found"; ls -la; exit 1; fi
+          node "$entry" &
+          npx wait-on -t 30000 http://127.0.0.1:3000/health
+      - name: Verify /health
+        run: |
+          curl -sS http://127.0.0.1:3000/health | tee health.json
+          test -s health.json
