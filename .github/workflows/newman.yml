@@ -22,3 +22,4 @@ jobs:
           npx wait-on -t 20000 http://127.0.0.1:3000/health
       - run: npx newman run tests/ttirring.postman_collection.json
 
+
