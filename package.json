@@ -1,1 +1,1 @@
-{ "name": "ttirring", "version": "0.1.0", "type": "commonjs", "main": "server/server.js", "scripts": { "start": "node server/server.js", "test": "cross-env PORT=0 jest -i" }, "jest": { "testEnvironment": "node" } }
+{"name":"ttirring","version":"0.1.0","type":"commonjs","main":"server/server.js","scripts":{"start":"node server/server.js","test":"cross-env PORT=0 jest -i","db:export":"node scripts/export-json.mjs","db:import":"node scripts/import-json.mjs"},"jest":{"testEnvironment":"node"}}
