@@ -1,13 +1,23 @@
-﻿name: newman
-on: [push, pull_request]
+name: CI - newman
+on:
+  push:
+  pull_request:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: "file:./prisma/dev.ci.sqlite"
+      PORT: 3000
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm ci
-      - run: nohup node server/server.js & sleep 3
+      - run: npm ci || npm install
+      - run: npx prisma generate
+      - run: npx prisma db push --accept-data-loss
+      - run: |
+          node server/server.js &
+          npx wait-on -t 20000 http://127.0.0.1:3000/health
       - run: npx newman run tests/ttirring.postman_collection.json
