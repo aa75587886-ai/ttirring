@@ -7,15 +7,12 @@ jobs:
     timeout-minutes: 10
     env:
       PORT: 3000
-      DATABASE_URL: "file:./prisma/dev.ci.sqlite"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
       - run: npm ci || npm install
-      - run: npx prisma generate --schema prisma/schema.ci.prisma
-      - run: npx prisma db push --schema prisma/schema.ci.prisma --accept-data-loss
       - name: Start server and wait for /health
         run: |
           set -e
