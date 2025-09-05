@@ -1,35 +1,43 @@
-name: CI - newman
+name: Newman (Postman) CI
+
 on:
   push:
   pull_request:
+
 jobs:
-  test:
+  newman:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      DATABASE_URL: "file:./prisma/dev.ci.sqlite"
-      PORT: 3000
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - run: npm ci || npm install
+          node-version: 22
 
-      # (DB 마이그레이션은 임시로 제거) 생성만 sqlite 스키마로 수행
-      - run: npx prisma generate --schema prisma/schema.ci.prisma || echo "skip prisma generate"
+      - name: Install deps
+        run: npm ci || npm install
 
-      # 서버 엔트리 자동 탐지 후 /health 대기
-      - name: Start server and wait for /health
+      - name: Prisma generate
+        run: npx prisma generate
+
+      - name: Start API (bg)
         run: |
-          set -e
-          entry=""
-          for f in server/server.js server.js app.js index.js dist/server.js; do
-            if [ -f "$f" ]; then entry="$f"; break; fi
+          export PORT=3000
+          node server/server.js & echo $! > api.pid
+          for i in {1..30}; do
+            curl -fsS "http://127.0.0.1:3000/health" && break
+            sleep 1
           done
-          if [ -z "$entry" ]; then echo "No server entry found"; ls -la; exit 1; fi
-          node "$entry" &
-          npx wait-on -t 30000 http://127.0.0.1:3000/health
 
-      # Postman 컬렉션 실행 (baseUrl 전달)
-      - run: npx newman run tests/ttirring.postman_collection.json --env-var "baseUrl=http://127.0.0.1:3000"
+      - name: Install Newman
+        run: npm i -g newman
+
+      - name: Run Postman collection
+        run: |
+          newman run tests/ttirring.postman_collection.json \
+            --env-var baseUrl=http://127.0.0.1:3000
+
+      - name: Stop API
+        if: always()
+        run: |
+          kill $(cat api.pid) || true

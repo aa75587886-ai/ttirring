@@ -1,16 +1,19 @@
-﻿{
-    "name":  "ttirring",
-    "version":  "0.1.0",
-    "type":  "commonjs",
-    "main":  "server/server.js",
-    "scripts":  {
-                    "start":  "node server/server.js",
-                    "test":  "cross-env PORT=0 jest -i",
-                    "db:export":  "node scripts/export-json.mjs",
-                    "db:import":  "node scripts/import-json.mjs",
-                    "dev":  "node server/server.js"
-                },
-    "jest":  {
-                 "testEnvironment":  "node"
-             }
+{
+  "name": "ttirring",
+  "version": "0.1.0",
+  "type": "commonjs",
+  "main": "server/server.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "test": "cross-env PORT=0 jest -i",
+    "db:export": "node scripts/export-json.mjs",
+    "db:import": "node scripts/import-json.mjs",
+    "dev": "node server/server.js",
+    "db:backup": "powershell -ExecutionPolicy Bypass -File scripts/backup/db-backup.ps1",
+    "db:migrate:deploy": "powershell -ExecutionPolicy Bypass -File scripts/migrate/deploy.ps1",
+    "db:migrate:reset": "powershell -ExecutionPolicy Bypass -File scripts/migrate/reset.ps1"
+  },
+  "jest": {
+    "testEnvironment": "node"
+  }
 }
