@@ -8,7 +8,17 @@ const yaml = require("yamljs");
 const swaggerUi = require("swagger-ui-express");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+
+const rateLimit = require('express-rate-limit');
+const limiter = rateLimit({
+  windowMs: 60 * 1000,       // 1분
+  limit: 60,                 // IP당 분당 60회
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { ok: false, error: 'RATE_LIMITED' }
+});
+app.use(limiter);
+
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -270,13 +280,10 @@ app.get("/v1/reservations/by-req", (req, res) => {
   return res.json({ ok: true, reservation: reservationsByReq.get(reqId) });
 });
 
-// ------------------------------
-// 서버 시작 (테스트 환경 분리)
-// ------------------------------
-if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`🚀 Ttirring API running at http://localhost:${PORT} (Docs: /docs)`);
-  });
-}
+// ===== Server Start =====
+const PORT = Number(process.env.PORT || 3000);
 
-module.exports = app;
+app.listen(PORT, () => {
+  console.log(`🚀 Ttirring API running at http://localhost:${PORT} (Docs: /docs)`);
+});
+
