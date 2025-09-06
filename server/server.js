@@ -241,9 +241,37 @@ if (swaggerUi && swaggerDoc) {
     res.type("text/plain").send("OpenAPI spec not loaded.");
   });
 }
+// ===== Fallback 404 & Error Handler =====
+// 404 for unknown routes
+app.use((req, res) => err(res, "NOT_FOUND", 404));
+
+// Centralized error handler
+// eslint-disable-next-line no-unused-vars
+app.use((error, req, res, next) => {
+  req.log?.error({ err: error, reqId: req.id }, "Unhandled error");
+  if (res.headersSent) return;
+  const status = error.status || error.statusCode || 500;
+  res.status(status).json({
+    ok: false,
+    error: status === 500 ? "INTERNAL_ERROR" : error.code || "ERROR",
+    message: process.env.NODE_ENV === "production" ? undefined : error.message,
+  });
+});
 
 // ===== 서버 시작 =====
 const PORT = Number(process.env.PORT || 3000);
-app.listen(PORT, () => {
+
+const srv = app.listen(PORT, () => {
   console.log(`🚀 Ttirring API running at http://localhost:${PORT} (Docs: /docs)`);
 });
+
+const shutdown = (signal) => {
+  console.log(`[${signal}] shutting down...`);
+  srv.close(() => {
+    console.log("HTTP server closed.");
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(1), 5000).unref(); // 안전 타임아웃
+};
+
+["SIGINT", "SIGTERM"].forEach((sig) => process.on(sig, () => shutdown(sig)));
