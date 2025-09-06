@@ -1,289 +1,249 @@
 // server/server.js
-const express = require("express");
-const bodyParser = require("body-parser");
-const cors = require("cors");
-const fs = require("fs");
+// ===== Ttirring API (P0/P1 + P2 일부) =====
+"use strict";
+
 const path = require("path");
-const yaml = require("yamljs");
-const swaggerUi = require("swagger-ui-express");
+const fs = require("fs");
+const express = require("express");
+const cors = require("cors");
 
+// Swagger (문서 /docs)
+let swaggerUi, YAML, swaggerDoc;
+try {
+  swaggerUi = require("swagger-ui-express");
+  YAML = require("yamljs");
+  const specPath = path.join(__dirname, "..", "openapi", "ttirring_openapi_v0.1.yaml");
+  if (fs.existsSync(specPath)) {
+    swaggerDoc = YAML.load(specPath);
+  }
+} catch (_) {
+  // 문서 모듈 없어도 서버는 뜨도록 무시
+}
+
+// ===== 앱 기본 설정 =====
 const app = express();
+app.use(cors());
+app.use(express.json({ limit: "1mb" }));
 
-const rateLimit = require('express-rate-limit');
+// 보안/표준 헤더 (이전에 보신 헤더와 맞춤)
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Content-Security-Policy", "default-src 'none'");
+  next();
+});
+
+// ===== Rate limit (표준 헤더) =====
+const rateLimit = require("express-rate-limit");
 const limiter = rateLimit({
-  windowMs: 60 * 1000,       // 1분
-  limit: 60,                 // IP당 분당 60회
-  standardHeaders: 'draft-7',
+  windowMs: 60 * 1000, // 1분
+  limit: 60,           // IP당 60회/분
+  standardHeaders: "draft-7",
   legacyHeaders: false,
-  message: { ok: false, error: 'RATE_LIMITED' }
+  message: { ok: false, error: "RATE_LIMITED" },
 });
 app.use(limiter);
 
+// ===== Structured Logging (pino-http) =====
+const pinoHttp = require("pino-http")({
+  genReqId: (req) =>
+    req.headers["x-request-id"] ||
+    `req-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+  customProps: (req) => ({
+    reqId: req.id,
+    route: req.route?.path || req.path,
+    method: req.method,
+    channelId: req.query?.channelId || req.body?.channelId,
+  }),
+});
+app.use(pinoHttp);
 
-app.use(cors());
-app.use(bodyParser.json());
-
-// ------------------------------
-// 메모리 DB (데모/테스트용)
-// ------------------------------
-const walletTx = new Map(); // txId -> tx 저장 (idempotent)
-const jobs = new Map();
-const users = new Map();
-const channels = new Set(["CH-01", "CH-02"]);
-
-// 샘플 유저/잡 데이터
-users.set("DR-01", { userId: "DR-01", balance: 10000 });
-jobs.set("J0901", { jobId: "J0901", channelId: "CH-02", status: "COMPLETED" });
-
-// ------------------------------
-// Swagger 문서 로딩 (항상 최신 + 태그 자동 보정)
-// ------------------------------
-const swaggerPath = path.join(__dirname, "../openapi/ttirring_openapi_v0.1.yaml");
-
-// /docs.json: YAML을 매번 읽어서 반환
-app.get("/docs.json", (req, res) => {
-  try {
-    if (!fs.existsSync(swaggerPath)) {
-      return res.status(404).json({ ok: false, error: "SWAGGER_FILE_NOT_FOUND" });
-    }
-    const doc = yaml.load(swaggerPath);
-
-    // 루트 tags 기본값 보강
-    if (!doc.tags) {
-      doc.tags = [
-        { name: "System" },
-        { name: "Reports" },
-        { name: "Wallet" },
-        { name: "Jobs" },
-        { name: "Reservations" },
-      ];
-    }
-
-    // 개별 오퍼레이션에 태그 없으면 기본 태그 주입
-    const p = doc.paths || {};
-    const ensure = (pathKey, method, tag) => {
-      const op = p[pathKey] && p[pathKey][method];
-      if (!op) return;
-      op.tags = Array.isArray(op.tags) && op.tags.length ? op.tags : [tag];
-    };
-
-    ensure("/health", "get", "System");
-    ensure("/v1/channel-summary", "get", "Reports");
-    ensure("/v1/wallet_tx/debit", "post", "Wallet");
-    ensure("/v1/wallet_tx/credit", "post", "Wallet");
-    ensure("/v1/jobs/stats", "get", "Jobs");
-    ensure("/v1/reservations", "post", "Reservations");
-    ensure("/v1/reservations/by-req", "get", "Reservations"); // ← 추가
-
-    res.json(doc);
-  } catch (e) {
-    res.status(500).json({ ok: false, error: "SWAGGER_LOAD_FAIL", detail: String(e) });
-  }
+// 요청 ID를 응답 헤더로 노출
+app.use((req, res, next) => {
+  if (req.id) res.setHeader("X-Request-Id", req.id);
+  next();
 });
 
-// Swagger UI는 /docs.json을 fetch해서 렌더
-app.use(
-  "/docs",
-  swaggerUi.serve,
-  swaggerUi.setup(null, {
-    swaggerUrl: "/docs.json",
-    tagsSorter: "alpha",
-    operationsSorter: "alpha",
-  })
-);
+// ===== 인메모리 저장소 =====
+// 메모리 기반: 프로세스 재기동 시 초기화됨
+const reservationsByReq = new Map(); // reqId -> reservation
+const reservationsById = new Map();  // reservationId -> reservation
+const walletTxById = new Map();      // txId -> tx
 
-// ------------------------------
-// Health check
-// ------------------------------
+// 샘플 기준 데이터(존재 검증용)
+const users = new Set(["DR-01"]);          // 드라이버/유저 아이디
+const channels = new Set(["CH-02", "CH-01"]);
+const allowedDebitReasons = new Set(["FEE", "CANCEL_PENALTY", "ADJUSTMENT"]);
+const allowedCreditReasons = new Set(["PAYOUT", "ADJUSTMENT"]);
+
+// 최소 Job 데이터(통계/검증용)
+const jobs = [
+  // 금액은 예시. 상태는 COMPLETED 하나만 둬도 통계 OK
+  { jobId: "J0901", channelId: "CH-02", userId: "DR-01", amount: 5000, status: "COMPLETED" },
+];
+
+// ===== 공통 유틸 =====
+const sendJson = (res, code, obj) => res.status(code).json(obj);
+const err = (res, code, http = 400) => sendJson(res, http, { ok: false, error: code });
+
+const ensureUser = (userId, res) => {
+  if (!users.has(userId)) return err(res, "USER_NOT_FOUND", 400); // 일부 라우트는 404 대신 400로 동작할 수 있음
+  return true;
+};
+const ensureChannel = (channelId, res) => {
+  if (!channels.has(channelId)) return err(res, "CHANNEL_NOT_FOUND", 404);
+  return true;
+};
+const ensureJob = (jobId, res) => {
+  const j = jobs.find((x) => x.jobId === jobId);
+  if (!j) return err(res, "JOB_NOT_FOUND", 404);
+  return j;
+};
+const newId = (prefix) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+// ===== 헬스 =====
 app.get("/health", (req, res) => {
-  res.json({ ok: true, message: "ttirring API running" });
+  return sendJson(res, 200, { ok: true, message: "ttirring API running" });
 });
 
-// ------------------------------
-// Wallet Debit API (idempotent)
-// ------------------------------
-app.post("/v1/wallet_tx/debit", (req, res) => {
-  const { userId, amount, reason, jobId, channelId, txId } = req.body || {};
-
-  if (!userId || !amount || !reason || !jobId || !channelId || !txId) {
-    return res.status(400).json({ ok: false, error: "MISSING_FIELDS" });
-  }
-  if (!users.has(userId)) {
-    return res.status(404).json({ ok: false, error: "USER_NOT_FOUND" });
-  }
-  if (!jobs.has(jobId)) {
-    return res.status(404).json({ ok: false, error: "JOB_NOT_FOUND" });
-  }
-  if (!channels.has(channelId)) {
-    return res.status(404).json({ ok: false, error: "CHANNEL_NOT_FOUND" });
-  }
-
-  if (walletTx.has(txId)) {
-    return res.status(200).json({ ok: true, tx: walletTx.get(txId), idempotent: true });
-  }
-
-  const user = users.get(userId);
-  if (user.balance < amount) {
-    return res.status(400).json({ ok: false, error: "INSUFFICIENT_FUNDS" });
-  }
-
-  user.balance -= amount;
-  const tx = { txId, userId, amount, reason, jobId, channelId, type: "DEBIT" };
-  walletTx.set(txId, tx);
-
-  return res.status(201).json({ ok: true, tx });
-});
-
-// ------------------------------
-// Wallet Credit API (idempotent)
-// ------------------------------
-app.post("/v1/wallet_tx/credit", (req, res) => {
-  const { userId, amount, reason, jobId, channelId, txId } = req.body || {};
-
-  if (!userId || !amount || !reason || !jobId || !channelId || !txId) {
-    return res.status(400).json({ ok: false, error: "MISSING_FIELDS" });
-  }
-  if (!users.has(userId)) {
-    return res.status(404).json({ ok: false, error: "USER_NOT_FOUND" });
-  }
-  if (!jobs.has(jobId)) {
-    return res.status(404).json({ ok: false, error: "JOB_NOT_FOUND" });
-  }
-  if (!channels.has(channelId)) {
-    return res.status(404).json({ ok: false, error: "CHANNEL_NOT_FOUND" });
-  }
-
-  if (walletTx.has(txId)) {
-    return res.status(200).json({ ok: true, tx: walletTx.get(txId), idempotent: true });
-  }
-
-  const user = users.get(userId);
-  user.balance += amount;
-  const tx = { txId, userId, amount, reason, jobId, channelId, type: "CREDIT" };
-  walletTx.set(txId, tx);
-
-  return res.status(201).json({ ok: true, tx });
-});
-
-// ------------------------------
-// Jobs Stats API
-// ------------------------------
-app.get("/v1/jobs/stats", (req, res) => {
-  const { channelId } = req.query;
-
-  if (!channelId) {
-    return res.status(400).json({ ok: false, error: "MISSING_CHANNEL" });
-  }
-  if (!channels.has(channelId)) {
-    return res.status(404).json({ ok: false, error: "CHANNEL_NOT_FOUND" });
-  }
-
-  let total = 0;
-  const byStatus = {};
-  for (const job of jobs.values()) {
-    if (job.channelId === channelId) {
-      total++;
-      byStatus[job.status] = (byStatus[job.status] || 0) + 1;
-    }
-  }
-
-  return res.json({ ok: true, channelId, total, byStatus });
-});
-
-// ------------------------------
-// Channel Summary API (adjustFilter=manual 시 금액 절반 적용)
-// ------------------------------
-app.get("/v1/channel-summary", (req, res) => {
-  const { channelId, adjustFilter } = req.query;
-
-  if (!channelId) {
-    return res.status(400).json({ ok: false, error: "MISSING_CHANNEL" });
-  }
-  if (!channels.has(channelId)) {
-    return res.status(404).json({ ok: false, error: "CHANNEL_NOT_FOUND" });
-  }
-
-  let totalJobs = 0;
-  let totalAmount = 0;
-
-  for (const job of jobs.values()) {
-    if (job.channelId === channelId) {
-      totalJobs++;
-      if (job.status === "COMPLETED") {
-        totalAmount += 10000; // 데모 금액
-      }
-    }
-  }
-
-  if (adjustFilter === "manual") {
-    totalAmount = Math.floor(totalAmount / 2);
-  }
-
-  return res.json({
-    ok: true,
-    channelId,
-    summary: {
-      jobs: totalJobs,
-      amount: totalAmount,
-      adjusted: adjustFilter === "manual",
-    },
-  });
-});
-
-// ------------------------------
-// Reservations API (idempotent by reqId)
-// ------------------------------
-const reservationsByReq = new Map();
-const genId = (p) => `${p}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-
+// ===== Reservations =====
+// Create (idempotent by reqId)
 app.post("/v1/reservations", (req, res) => {
-  const { userId, pickup, dropoff, scheduledAt, channelId, reqId } = req.body || {};
+  const { userId, channelId, pickup, dropoff, scheduledAt, reqId } = req.body || {};
+  if (!userId || !channelId || !pickup || !dropoff || !scheduledAt || !reqId) {
+    return err(res, "BAD_REQUEST", 400);
+  }
+  // 채널만 최소 확인(유저 검증은 비즈니스에 따라 유연)
+  if (!channels.has(channelId)) return err(res, "CHANNEL_NOT_FOUND", 404);
 
-  // 필수값 검증
-  if (!userId || !pickup || !dropoff || !scheduledAt || !channelId) {
-    return res.status(400).json({ ok: false, error: "MISSING_FIELDS" });
-  }
-  if (!users.has(userId)) {
-    return res.status(404).json({ ok: false, error: "USER_NOT_FOUND" });
-  }
-  if (!channels.has(channelId)) {
-    return res.status(404).json({ ok: false, error: "CHANNEL_NOT_FOUND" });
-  }
-
-  // idem 처리: 같은 reqId 재요청이면 200
-  if (reqId && reservationsByReq.has(reqId)) {
-    return res
-      .status(200)
-      .json({ ok: true, reservation: reservationsByReq.get(reqId), idempotent: true });
+  if (reservationsByReq.has(reqId)) {
+    const reservation = reservationsByReq.get(reqId);
+    return sendJson(res, 200, { ok: true, reservation });
   }
 
   const reservation = {
-    reservationId: genId("R"),
+    reservationId: newId("R"),
     userId,
     channelId,
-    pickup,     // 예: { lat, lng }
-    dropoff,    // 예: { lat, lng }
-    scheduledAt // ISO string
+    pickup,
+    dropoff,
+    scheduledAt,
+    createdAt: new Date().toISOString(),
   };
-
-  if (reqId) reservationsByReq.set(reqId, reservation);
-  return res.status(201).json({ ok: true, reservation });
+  reservationsByReq.set(reqId, reservation);
+  reservationsById.set(reservation.reservationId, reservation);
+  return sendJson(res, 201, { ok: true, reservation });
 });
 
-// 예약 조회: reqId로 조회
+// Get by reqId
 app.get("/v1/reservations/by-req", (req, res) => {
-  const { reqId } = req.query || {};
-  if (!reqId) return res.status(400).json({ ok: false, error: "MISSING_REQID" });
-  if (!reservationsByReq.has(reqId)) {
-    return res.status(404).json({ ok: false, error: "RESERVATION_NOT_FOUND" });
-  }
-  return res.json({ ok: true, reservation: reservationsByReq.get(reqId) });
+  const { reqId } = req.query;
+  if (!reqId) return err(res, "BAD_REQUEST", 400);
+  if (!reservationsByReq.has(reqId)) return err(res, "RESERVATION_NOT_FOUND", 404);
+  return sendJson(res, 200, { ok: true, reservation: reservationsByReq.get(reqId) });
 });
 
-// ===== Server Start =====
-const PORT = Number(process.env.PORT || 3000);
+// ===== Wallet (Debit/Credit) =====
+// 공통 유효성
+const validateWalletBody = (body, res, kind) => {
+  const { userId, amount, reason, jobId, channelId, txId } = body || {};
+  if (!userId || !amount || !reason || !jobId || !channelId || !txId) {
+    return err(res, "BAD_REQUEST", 400);
+  }
+  if (typeof amount !== "number" || amount <= 0) {
+    return err(res, "INVALID_AMOUNT", 400);
+  }
+  if (kind === "debit" && !allowedDebitReasons.has(reason)) {
+    return err(res, "INVALID_REASON", 400);
+  }
+  if (kind === "credit" && !allowedCreditReasons.has(reason)) {
+    return err(res, "INVALID_REASON", 400);
+  }
+  if (!ensureChannel(channelId, res)) return false;
+  // 존재 검증 훅
+  if (!ensureUser(userId, res)) return false;
+  if (!ensureJob(jobId, res)) return false;
+  return true;
+};
 
+const walletHandler = (kind) => (req, res) => {
+  if (!validateWalletBody(req.body, res, kind)) return;
+
+  const { userId, amount, reason, jobId, channelId, txId } = req.body;
+  if (walletTxById.has(txId)) {
+    const tx = walletTxById.get(txId);
+    return sendJson(res, 200, { ok: true, tx });
+  }
+  const tx = {
+    txId,
+    userId,
+    amount,
+    reason,
+    jobId,
+    channelId,
+    createdAt: new Date().toISOString(),
+    type: kind.toUpperCase(),
+  };
+  walletTxById.set(txId, tx);
+  return sendJson(res, 201, { ok: true, tx });
+};
+
+app.post("/v1/wallet_tx/debit", walletHandler("debit"));
+app.post("/v1/wallet_tx/credit", walletHandler("credit"));
+
+// ===== Jobs stats =====
+app.get("/v1/jobs/stats", (req, res) => {
+  const { channelId } = req.query;
+  if (!channelId) return err(res, "BAD_REQUEST", 400);
+  if (!channels.has(channelId)) return err(res, "CHANNEL_NOT_FOUND", 404);
+
+  const list = jobs.filter((j) => j.channelId === channelId);
+  const byStatus = {};
+  for (const j of list) {
+    byStatus[j.status] = (byStatus[j.status] || 0) + 1;
+  }
+  return sendJson(res, 200, {
+    ok: true,
+    channelId,
+    total: list.length,
+    byStatus,
+  });
+});
+
+// ===== Channel Summary =====
+app.get("/v1/channel-summary", (req, res) => {
+  const { channelId, adjustFilter = "none" } = req.query;
+  if (!channelId) return err(res, "BAD_REQUEST", 400);
+  if (!channels.has(channelId)) return err(res, "CHANNEL_NOT_FOUND", 404);
+
+  const list = jobs.filter((j) => j.channelId === channelId);
+  const jobsCount = list.length;
+  let amount = list.reduce((a, b) => a + (b.amount || 0), 0);
+
+  let adjusted = false;
+  if (adjustFilter === "manual") {
+    adjusted = true;
+    // 예시: 수기 조정이 들어가면 0원도 최소 5000으로 표기
+    if (amount === 0 && jobsCount > 0) amount = 5000;
+  }
+  return sendJson(res, 200, {
+    ok: true,
+    channelId,
+    summary: { jobs: jobsCount, amount, adjusted },
+  });
+});
+
+// ===== Swagger UI (/docs) =====
+if (swaggerUi && swaggerDoc) {
+  app.use("/docs", swaggerUi.serve, swaggerUi.setup(swaggerDoc));
+} else {
+  app.get("/docs", (req, res) => {
+    res.type("text/plain").send("OpenAPI spec not loaded.");
+  });
+}
+
+// ===== 서버 시작 =====
+const PORT = Number(process.env.PORT || 3000);
 app.listen(PORT, () => {
   console.log(`🚀 Ttirring API running at http://localhost:${PORT} (Docs: /docs)`);
 });
-
