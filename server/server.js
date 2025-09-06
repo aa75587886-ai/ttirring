@@ -14,7 +14,9 @@ try {
   YAML = require("yamljs");
   const specPath = path.join(__dirname, "..", "openapi", "ttirring_openapi_v0.1.yaml");
   if (fs.existsSync(specPath)) swaggerDoc = YAML.load(specPath);
-} catch (_) { /* optional */ }
+} catch (_) {
+  /* optional */
+}
 
 // App
 const app = express();
@@ -23,15 +25,20 @@ app.use(express.json({ limit: "1mb" }));
 
 // Security headers (helmet)
 const helmet = require("helmet");
-app.use(helmet({
-  contentSecurityPolicy: {
-    useDefaults: true,
-    directives: { defaultSrc: ["'none'"] },
-  },
-  crossOriginResourcePolicy: { policy: "cross-origin" },
-}));
-// CORS open (keep simple for local dev)
-app.use((req, res, next) => { res.setHeader("Access-Control-Allow-Origin", "*"); next(); });
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: { defaultSrc: ["'none'"] },
+    },
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
+// CORS open (simple for local dev)
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  next();
+});
 
 // Rate limit
 const rateLimit = require("express-rate-limit");
@@ -46,12 +53,20 @@ app.use(limiter);
 
 // Logging (pino + pretty in non-prod)
 const pino = require("pino");
-const baseLogger = pino(process.env.NODE_ENV === "production" ? undefined : {
-  transport: {
-    target: "pino-pretty",
-    options: { colorize: true, singleLine: true, translateTime: "SYS:yyyy-mm-dd HH:MM:ss.l o" },
-  },
-});
+const baseLogger =
+  process.env.NODE_ENV === "production"
+    ? pino()
+    : pino({
+        transport: {
+          target: "pino-pretty",
+          options: {
+            colorize: true,
+            singleLine: true,
+            translateTime: "SYS:yyyy-mm-dd HH:MM:ss.l o",
+          },
+        },
+      });
+
 const pinoHttp = require("pino-http")({
   logger: baseLogger,
   genReqId: (req) =>
@@ -65,7 +80,10 @@ const pinoHttp = require("pino-http")({
   }),
 });
 app.use(pinoHttp);
-app.use((req, res, next) => { if (req.id) res.setHeader("X-Request-Id", req.id); next(); });
+app.use((req, res, next) => {
+  if (req.id) res.setHeader("X-Request-Id", req.id);
+  next();
+});
 
 // In-memory stores (reset on restart)
 const reservationsByReq = new Map();
@@ -84,23 +102,31 @@ const jobs = [
 // Utils
 const sendJson = (res, code, obj) => res.status(code).json(obj);
 const err = (res, code, http = 400) => sendJson(res, http, { ok: false, error: code });
-const ensureUser = (userId, res) => { if (!users.has(userId)) return err(res, "USER_NOT_FOUND", 400); return true; };
-const ensureChannel = (channelId, res) => { if (!channels.has(channelId)) return err(res, "CHANNEL_NOT_FOUND", 404); return true; };
-const ensureJob = (jobId, res) => { const j = jobs.find(x => x.jobId === jobId); if (!j) return err(res, "JOB_NOT_FOUND", 404); return j; };
+const ensureUser = (userId, res) => {
+  if (!users.has(userId)) return err(res, "USER_NOT_FOUND", 400);
+  return true;
+};
+const ensureChannel = (channelId, res) => {
+  if (!channels.has(channelId)) return err(res, "CHANNEL_NOT_FOUND", 404);
+  return true;
+};
+const ensureJob = (jobId, res) => {
+  const j = jobs.find((x) => x.jobId === jobId);
+  if (!j) return err(res, "JOB_NOT_FOUND", 404);
+  return j;
+};
 const newId = (prefix) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
 // Zod Schemas
 const LatLngSchema = z.object({ lat: z.number(), lng: z.number() });
-
 const ReservationCreateSchema = z.object({
   userId: z.string().min(1),
   channelId: z.string().min(1),
   pickup: LatLngSchema,
   dropoff: LatLngSchema,
-  scheduledAt: z.string().min(1), // keep simple
+  scheduledAt: z.string().min(1),
   reqId: z.string().min(1),
 });
-
 const WalletTxSchema = z.object({
   userId: z.string().min(1),
   amount: z.number().int().positive(),
@@ -109,7 +135,6 @@ const WalletTxSchema = z.object({
   channelId: z.string().min(1),
   txId: z.string().min(1),
 });
-
 const ReqIdQuerySchema = z.object({ reqId: z.string().min(1) });
 const ChannelIdQuerySchema = z.object({ channelId: z.string().min(1) });
 const ChannelSummaryQuerySchema = z.object({
@@ -122,20 +147,27 @@ app.get("/health", (req, res) => sendJson(res, 200, { ok: true, message: "ttirri
 
 // Reservations: create (idempotent by reqId)
 app.post("/v1/reservations", (req, res) => {
-  const parsed = ReservationCreateSchema.safeParse(req.body);
-  if (!parsed.success) return err(res, "BAD_REQUEST", 400);
-  const { userId, channelId, pickup, dropoff, scheduledAt, reqId } = parsed.data;
+  // ✅ 테스트 기대치: 채널 유효성 404를 Zod 이전에 우선 처리
+  const ch = req.body?.channelId;
+  if (!ch) return err(res, "MISSING_FIELDS", 400);
+  if (!channels.has(ch)) return err(res, "CHANNEL_NOT_FOUND", 404);
 
-  if (!channels.has(channelId)) return err(res, "CHANNEL_NOT_FOUND", 404);
+  const parsed = ReservationCreateSchema.safeParse(req.body);
+  if (!parsed.success) return err(res, "MISSING_FIELDS", 400); // 테스트 메시지 호환
+  const { userId, channelId, pickup, dropoff, scheduledAt, reqId } = parsed.data;
 
   if (reservationsByReq.has(reqId)) {
     const reservation = reservationsByReq.get(reqId);
-    return sendJson(res, 200, { ok: true, reservation });
+    return sendJson(res, 200, { ok: true, reservation, idempotent: true });
   }
 
   const reservation = {
     reservationId: newId("R"),
-    userId, channelId, pickup, dropoff, scheduledAt,
+    userId,
+    channelId,
+    pickup,
+    dropoff,
+    scheduledAt,
     createdAt: new Date().toISOString(),
   };
   reservationsByReq.set(reqId, reservation);
@@ -152,7 +184,7 @@ app.get("/v1/reservations/by-req", (req, res) => {
   return sendJson(res, 200, { ok: true, reservation: reservationsByReq.get(reqId) });
 });
 
-// Wallet common validator
+// Wallet
 const validateWallet = (data, res, kind) => {
   const parsed = WalletTxSchema.safeParse(data);
   if (!parsed.success) return err(res, "BAD_REQUEST", 400);
@@ -162,18 +194,19 @@ const validateWallet = (data, res, kind) => {
   if (!ensureUser(body.userId, res)) return false;
   if (!ensureJob(body.jobId, res)) return false;
 
-  if (kind === "debit" && !allowedDebitReasons.has(body.reason)) return err(res, "INVALID_REASON", 400);
-  if (kind === "credit" && !allowedCreditReasons.has(body.reason)) return err(res, "INVALID_REASON", 400);
+  if (kind === "debit" && !allowedDebitReasons.has(body.reason))
+    return err(res, "INVALID_REASON", 400);
+  if (kind === "credit" && !allowedCreditReasons.has(body.reason))
+    return err(res, "INVALID_REASON", 400);
   return body;
 };
-
 const walletHandler = (kind) => (req, res) => {
   const body = validateWallet(req.body, res, kind);
   if (!body) return;
 
   if (walletTxById.has(body.txId)) {
     const tx = walletTxById.get(body.txId);
-    return sendJson(res, 200, { ok: true, tx });
+    return sendJson(res, 200, { ok: true, tx, idempotent: true });
   }
   const tx = {
     txId: body.txId,
@@ -188,14 +221,16 @@ const walletHandler = (kind) => (req, res) => {
   walletTxById.set(body.txId, tx);
   return sendJson(res, 201, { ok: true, tx });
 };
-
 app.post("/v1/wallet_tx/debit", walletHandler("debit"));
 app.post("/v1/wallet_tx/credit", walletHandler("credit"));
 
 // Jobs stats
 app.get("/v1/jobs/stats", (req, res) => {
   const parsed = ChannelIdQuerySchema.safeParse(req.query);
-  if (!parsed.success) return err(res, "BAD_REQUEST", 400);
+  if (!parsed.success) {
+    if (!req.query?.channelId) return err(res, "MISSING_CHANNEL", 400); // 테스트 호환
+    return err(res, "BAD_REQUEST", 400);
+  }
   const { channelId } = parsed.data;
   if (!channels.has(channelId)) return err(res, "CHANNEL_NOT_FOUND", 404);
 
@@ -209,7 +244,10 @@ app.get("/v1/jobs/stats", (req, res) => {
 // Channel summary
 app.get("/v1/channel-summary", (req, res) => {
   const parsed = ChannelSummaryQuerySchema.safeParse(req.query);
-  if (!parsed.success) return err(res, "BAD_REQUEST", 400);
+  if (!parsed.success) {
+    if (!req.query?.channelId) return err(res, "MISSING_CHANNEL", 400); // 테스트 호환
+    return err(res, "BAD_REQUEST", 400);
+  }
   const channelId = parsed.data.channelId;
   const adjustFilter = parsed.data.adjustFilter ?? "none";
 
@@ -222,9 +260,13 @@ app.get("/v1/channel-summary", (req, res) => {
   let adjusted = false;
   if (adjustFilter === "manual") {
     adjusted = true;
-    if (amount === 0 && jobsCount > 0) amount = 5000;
+    amount = Math.round(amount / 2); // manual = base의 1/2 (테스트 기대)
   }
-  return sendJson(res, 200, { ok: true, channelId, summary: { jobs: jobsCount, amount, adjusted } });
+  return sendJson(res, 200, {
+    ok: true,
+    channelId,
+    summary: { jobs: jobsCount, amount, adjusted },
+  });
 });
 
 // Swagger UI (/docs)
@@ -248,14 +290,22 @@ app.use((error, req, res, next) => {
   });
 });
 
-// Start
-const PORT = Number(process.env.PORT || 3000);
-const srv = app.listen(PORT, () => {
-  console.log(`🚀 Ttirring API running at http://localhost:${PORT} (Docs: /docs)`);
-});
-const shutdown = (signal) => {
-  console.log(`[${signal}] shutting down...`);
-  srv.close(() => { console.log("HTTP server closed."); process.exit(0); });
-  setTimeout(() => process.exit(1), 5000).unref();
-};
-["SIGINT", "SIGTERM"].forEach((sig) => process.on(sig, () => shutdown(sig)));
+// === Export for tests ===
+module.exports = app;
+
+// === Run server only when run directly ===
+if (require.main === module) {
+  const PORT = Number(process.env.PORT || 3000);
+  const srv = app.listen(PORT, () => {
+    console.log(`🚀 Ttirring API running at http://localhost:${PORT} (Docs: /docs)`);
+  });
+  const shutdown = (signal) => {
+    console.log(`[${signal}] shutting down...`);
+    srv.close(() => {
+      console.log("HTTP server closed.");
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(1), 5000).unref();
+  };
+  ["SIGINT", "SIGTERM"].forEach((sig) => process.on(sig, () => shutdown(sig)));
+}
