@@ -25,11 +25,21 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
-// 보안/표준 헤더 (이전에 보신 헤더와 맞춤)
+// 보안 헤더 (helmet)
+const helmet = require('helmet');
+app.use(helmet({
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: {
+      defaultSrc: ["'none'"], // 기존 정책 유지
+    },
+  },
+  crossOriginResourcePolicy: { policy: 'cross-origin' }, // 로컬 테스트 편의
+}));
+
+// CORS 전 구간 허용(테스트 편의, 기존 app.use(cors())는 그대로 두세요)
 app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Content-Security-Policy", "default-src 'none'");
+  res.setHeader('Access-Control-Allow-Origin', '*');
   next();
 });
 
@@ -44,10 +54,27 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// ===== Structured Logging (pino-http) =====
-const pinoHttp = require("pino-http")({
+// ===== Structured Logging (pino + pino-http pretty in non-prod) =====
+const pino = require('pino');
+const baseLogger = pino(
+  process.env.NODE_ENV === 'production'
+    ? undefined
+    : {
+        transport: {
+          target: 'pino-pretty',
+          options: {
+            colorize: true,
+            singleLine: true,
+            translateTime: "SYS:yyyy-mm-dd HH:MM:ss.l o",
+          },
+        },
+      }
+);
+
+const pinoHttp = require('pino-http')({
+  logger: baseLogger,
   genReqId: (req) =>
-    req.headers["x-request-id"] ||
+    req.headers['x-request-id'] ||
     `req-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
   customProps: (req) => ({
     reqId: req.id,
@@ -57,6 +84,7 @@ const pinoHttp = require("pino-http")({
   }),
 });
 app.use(pinoHttp);
+
 
 // 요청 ID를 응답 헤더로 노출
 app.use((req, res, next) => {
