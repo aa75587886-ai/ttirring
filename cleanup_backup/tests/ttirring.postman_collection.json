@@ -1,0 +1,74 @@
+{
+  "info": {
+    "name": "Ttirring API Tests",
+    "_postman_id": "ttirring-collection-001",
+    "description": "Postman collection for Ttirring API smoke/integration tests",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/health"
+      },
+      "response": []
+    },
+    {
+      "name": "Reservation Create",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{ \"userId\": \"U-01\", \"channelId\": \"CH-01\", \"pickup\": \"A\", \"dropoff\": \"B\" }"
+        },
+        "url": "{{baseUrl}}/v1/reservations"
+      },
+      "response": []
+    },
+    {
+      "name": "Jobs Stats - Channel Not Found",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/v1/jobs/stats?channelId=CH-404"
+      },
+      "response": []
+    },
+    {
+      "name": "Wallet Debit Idempotent",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.environment.set(\"txId\", \"TX-12345\");"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{ \"userId\": \"DR-01\", \"amount\": 1000, \"reason\": \"FEE\", \"jobId\": \"J-01\", \"channelId\": \"CH-01\", \"txId\": \"{{txId}}\" }"
+        },
+        "url": "{{baseUrl}}/v1/wallet_tx/debit"
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:3000"
+    }
+  ]
+}

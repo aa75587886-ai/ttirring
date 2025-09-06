@@ -1,0 +1,46 @@
+name: Newman (Postman) CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  newman:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install deps
+        run: npm ci || npm install
+
+      # --- 🔑 Prisma 단계는 완전히 Skip (CI smoke에 불필요) ---
+      - name: Skip Prisma
+        run: echo "Skipping Prisma for CI smoke tests"
+
+      - name: Start API (bg) and wait for /health
+        env:
+          PORT: "3000"
+        run: |
+          set -e
+          node server/server.js & echo $! > api.pid
+          npx wait-on -t 60000 http://127.0.0.1:3000/health
+
+      - name: Install Newman
+        run: npm i -g newman
+
+      - name: Run Postman collection
+        run: |
+          newman run tests/ttirring.postman_collection.json \
+            --env-var baseUrl=http://127.0.0.1:3000
+
+      - name: Stop API
+        if: always()
+        run: |
+          if [ -f api.pid ]; then
+            kill $(cat api.pid) || true
+          fi

@@ -1,0 +1,125 @@
+﻿openapi: 3.0.3
+info:
+  title: Ttirring (띠링) Platform API
+  version: 0.1.1
+servers:
+  - url: http://127.0.0.1:3000
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200': { description: OK }
+
+  /v1/reservations:
+    post:
+      summary: Create reservation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [jobId, channelId, passengerName, pickupAddr, dropoffAddr]
+              properties:
+                jobId: { type: string }
+                channelId: { type: string }
+                passengerName: { type: string }
+                pickupAddr: { type: string }
+                dropoffAddr: { type: string }
+      responses:
+        '201': { description: Created }
+
+  /v1/jobs:
+    get:
+      summary: List jobs
+      parameters:
+        - in: query
+          name: channelId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+
+  /v1/jobs/stats:
+    get:
+      summary: Job stats by channel
+      parameters:
+        - in: query
+          name: channelId
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: OK }
+
+  /v1/wallet_tx/debit:
+    post:
+      summary: Debit wallet (idempotent)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, amount, reason, channelId]
+              properties:
+                userId: { type: string }
+                amount: { type: integer }
+                reason: { type: string, enum: [CANCEL_PENALTY, FEE, ADJUST] }
+                jobId: { type: string }
+                channelId: { type: string }
+      responses:
+        '201': { description: Created }
+        '200': { description: Duplicate (Idempotent replay) }
+
+  /v1/wallet_tx/credit:
+    post:
+      summary: Credit wallet (idempotent)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, amount, reason, channelId]
+              properties:
+                userId: { type: string }
+                amount: { type: integer }
+                reason: { type: string, enum: [RECHARGE, REFUND, ADJUST] }
+                jobId: { type: string }
+                channelId: { type: string }
+      responses:
+        '201': { description: Created }
+        '200': { description: Duplicate (Idempotent replay) }
+
+  /v1/reports/top-drivers:
+    get:
+      summary: Top drivers by jobs/amount
+      parameters:
+        - in: query
+          name: channelId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 10, minimum: 1, maximum: 100 }
+      responses:
+        '200': { description: OK }
+
+  /v1/settlements/daily:
+    get:
+      summary: Daily settlements aggregated
+      parameters:
+        - in: query
+          name: channelId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+      responses:
+        '200': { description: OK }
+
