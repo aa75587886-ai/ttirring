@@ -1,4 +1,5 @@
 ﻿[![Release](https://img.shields.io/github/v/release/aa75587886-ai/ttirring?label=Ttirring%20API)](https://github.com/aa75587886-ai/ttirring/releases/latest)
+[![CI](https://github.com/aa75587886-ai/ttirring/actions/workflows/ci.yml/badge.svg)](https://github.com/aa75587886-ai/ttirring/actions/workflows/ci.yml)
 
 # Ttirring (띠링) Platform API
 
