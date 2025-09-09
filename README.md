@@ -9,6 +9,12 @@ Express + Prisma + SQLite 기반 API.
 - Docs: http://localhost:3000/docs
 - Health: GET /health
 
+## Downloads
+- OpenAPI spec (YAML):  
+  https://github.com/aa75587886-ai/ttirring/releases/latest/download/ttirring_openapi_v0.1.yaml
+- Postman collection:  
+  https://github.com/aa75587886-ai/ttirring/releases/latest/download/ttirring.postman_collection.json
+
 ## Quick Start
 1. npm install
 2. npm run prisma:generate
