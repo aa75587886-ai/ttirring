@@ -2,60 +2,38 @@ name: CI
 
 on:
   push:
+    branches: [ "main" ]
   pull_request:
+    branches: [ "main" ]
 
 jobs:
   test:
     runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: ttirring
-          POSTGRES_PASSWORD: ttirringpw
-          POSTGRES_DB: ttirring
-        ports:
-          - "5432:5432"
-        options: >-
-          --health-cmd "pg_isready -U ttirring -d ttirring"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22.x
-          cache: npm
-
-      - name: Install Postgres client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+          node-version: "20"
+          cache: "npm"
 
       - name: Install deps
         run: npm ci
 
-      - name: Set DATABASE_URL
-        run: echo "DATABASE_URL=postgresql://ttirring:ttirringpw@localhost:5432/ttirring?schema=public" >> $GITHUB_ENV
-
-      - name: Wait for Postgres
-        run: |
-          for i in {1..30}; do
-            if pg_isready -h localhost -p 5432 -U ttirring -d ttirring; then
-              echo "Postgres is ready"; break
-            fi
-            echo "Waiting for Postgres... ($i)"
-            sleep 2
-          done
-
-      - name: Prisma migrate deploy
-        run: npx prisma migrate deploy
-
       - name: Run tests
         env:
           PORT: 0
+          NODE_ENV: test
         run: npm test
+
+      - name: Show coverage if exists
+        if: always()
+        run: |
+          if [ -f coverage/lcov.info ]; then
+            echo "coverage found"
+            sed -n '1,200p' coverage/lcov.info | head -n 20 || true
+          else
+            echo "no coverage directory"
+          fi
