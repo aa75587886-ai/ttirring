@@ -29,3 +29,5 @@ Express + Prisma + SQLite 기반 API.
 - Reservations: POST /v1/reservations, GET /v1/reservations
 - Wallet: POST /v1/wallet/recharge, GET /v1/wallet/transactions?userId=...
 - Settlements: POST /v1/settlements/preview, POST /v1/settlements/close
+
+- OpenAPI (local): GET /openapi.yaml
