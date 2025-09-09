@@ -33,6 +33,9 @@ jobs:
           node-version: 22.x
           cache: npm
 
+      - name: Install Postgres client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
       - name: Install deps
         run: npm ci
 
@@ -42,7 +45,7 @@ jobs:
       - name: Wait for Postgres
         run: |
           for i in {1..30}; do
-            if pg_isready -h localhost -p 5432 -U ttirring; then
+            if pg_isready -h localhost -p 5432 -U ttirring -d ttirring; then
               echo "Postgres is ready"; break
             fi
             echo "Waiting for Postgres... ($i)"
