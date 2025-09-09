@@ -51,6 +51,13 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
+// ✅ 공통 응답 헤더 (가볍게 하드코딩)
+app.use((req, res, next) => {
+  res.setHeader("X-App-Version", "v0.2.1");
+  res.setHeader("X-Env", process.env.NODE_ENV || "development");
+  next();
+});
+
 // Logging (pino + pretty in non-prod)
 const pino = require("pino");
 const baseLogger =
@@ -102,20 +109,30 @@ const jobs = [
 // Utils
 const sendJson = (res, code, obj) => res.status(code).json(obj);
 const err = (res, code, http = 400) => sendJson(res, http, { ok: false, error: code });
-const ensureUser = (userId, res) => {
-  if (!users.has(userId)) return err(res, "USER_NOT_FOUND", 400);
-  return true;
-};
-const ensureChannel = (channelId, res) => {
-  if (!channels.has(channelId)) return err(res, "CHANNEL_NOT_FOUND", 404);
-  return true;
-};
-const ensureJob = (jobId, res) => {
-  const j = jobs.find((x) => x.jobId === jobId);
-  if (!j) return err(res, "JOB_NOT_FOUND", 404);
-  return j;
-};
 const newId = (prefix) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+// === 존재 검증 미들웨어 (in-memory) ===
+const validateUser = (req, res, next) => {
+  const userId = req.body?.userId || req.query?.userId;
+  if (!userId) return err(res, "userId required", 400);
+  if (!users.has(userId)) return err(res, "USER_NOT_FOUND", 404);
+  next();
+};
+
+const validateChannel = (req, res, next) => {
+  const channelId = req.body?.channelId || req.query?.channelId;
+  if (!channelId) return err(res, "channelId required", 400);
+  if (!channels.has(channelId)) return err(res, "CHANNEL_NOT_FOUND", 404);
+  next();
+};
+
+const validateJob = (req, res, next) => {
+  const jobId = req.body?.jobId || req.query?.jobId;
+  if (!jobId) return err(res, "jobId required", 400);
+  const found = jobs.find((j) => j.jobId === jobId);
+  if (!found) return err(res, "JOB_NOT_FOUND", 404);
+  next();
+};
 
 // Zod Schemas
 const LatLngSchema = z.object({ lat: z.number(), lng: z.number() });
@@ -147,7 +164,7 @@ app.get("/health", (req, res) => sendJson(res, 200, { ok: true, message: "ttirri
 
 // Reservations: create (idempotent by reqId)
 app.post("/v1/reservations", (req, res) => {
-  // ✅ 테스트 기대치: 채널 유효성 404를 Zod 이전에 우선 처리
+  // ✅ 채널 유효성 404를 Zod 이전에 우선 처리
   const ch = req.body?.channelId;
   if (!ch) return err(res, "MISSING_FIELDS", 400);
   if (!channels.has(ch)) return err(res, "CHANNEL_NOT_FOUND", 404);
@@ -184,30 +201,27 @@ app.get("/v1/reservations/by-req", (req, res) => {
   return sendJson(res, 200, { ok: true, reservation: reservationsByReq.get(reqId) });
 });
 
-// Wallet
-const validateWallet = (data, res, kind) => {
-  const parsed = WalletTxSchema.safeParse(data);
+// Wallet (미들웨어 + Zod + idempotent)
+const validateWalletBody = (kind) => (req, res, next) => {
+  const parsed = WalletTxSchema.safeParse(req.body);
   if (!parsed.success) return err(res, "BAD_REQUEST", 400);
-  const body = parsed.data;
 
-  if (!ensureChannel(body.channelId, res)) return false;
-  if (!ensureUser(body.userId, res)) return false;
-  if (!ensureJob(body.jobId, res)) return false;
+  const { reason } = parsed.data;
+  if (kind === "debit" && !allowedDebitReasons.has(reason)) return err(res, "INVALID_REASON", 400);
+  if (kind === "credit" && !allowedCreditReasons.has(reason)) return err(res, "INVALID_REASON", 400);
 
-  if (kind === "debit" && !allowedDebitReasons.has(body.reason))
-    return err(res, "INVALID_REASON", 400);
-  if (kind === "credit" && !allowedCreditReasons.has(body.reason))
-    return err(res, "INVALID_REASON", 400);
-  return body;
+  next();
 };
-const walletHandler = (kind) => (req, res) => {
-  const body = validateWallet(req.body, res, kind);
-  if (!body) return;
 
+const walletHandler = (kind) => (req, res) => {
+  const body = req.body;
+
+  // idempotent by txId
   if (walletTxById.has(body.txId)) {
     const tx = walletTxById.get(body.txId);
     return sendJson(res, 200, { ok: true, tx, idempotent: true });
   }
+
   const tx = {
     txId: body.txId,
     userId: body.userId,
@@ -221,8 +235,26 @@ const walletHandler = (kind) => (req, res) => {
   walletTxById.set(body.txId, tx);
   return sendJson(res, 201, { ok: true, tx });
 };
-app.post("/v1/wallet_tx/debit", walletHandler("debit"));
-app.post("/v1/wallet_tx/credit", walletHandler("credit"));
+
+// 지갑 출금 (DEBIT)
+app.post(
+  "/v1/wallet_tx/debit",
+  validateChannel,
+  validateUser,
+  validateJob,
+  validateWalletBody("debit"),
+  walletHandler("debit")
+);
+
+// 지갑 충전 (CREDIT)
+app.post(
+  "/v1/wallet_tx/credit",
+  validateChannel,
+  validateUser,
+  validateJob,
+  validateWalletBody("credit"),
+  walletHandler("credit")
+);
 
 // Jobs stats
 app.get("/v1/jobs/stats", (req, res) => {
