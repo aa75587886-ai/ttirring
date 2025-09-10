@@ -34,6 +34,7 @@ app.use(
     crossOriginResourcePolicy: { policy: "cross-origin" },
   })
 );
+
 // CORS open (simple for local dev)
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -51,9 +52,9 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// ✅ 공통 응답 헤더 (가볍게 하드코딩)
+// ✅ 공통 응답 헤더
 app.use((req, res, next) => {
-  res.setHeader("X-App-Version", "v0.2.1");
+  res.setHeader("X-App-Version", process.env.APP_VERSION || "v0.2.1");
   res.setHeader("X-Env", process.env.NODE_ENV || "development");
   next();
 });
@@ -114,21 +115,21 @@ const newId = (prefix) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 
 // === 존재 검증 미들웨어 (in-memory) ===
 const validateUser = (req, res, next) => {
   const userId = req.body?.userId || req.query?.userId;
-  if (!userId) return err(res, "userId required", 400);
+  if (!userId) return err(res, "USER_ID_REQUIRED", 400);
   if (!users.has(userId)) return err(res, "USER_NOT_FOUND", 404);
   next();
 };
 
 const validateChannel = (req, res, next) => {
   const channelId = req.body?.channelId || req.query?.channelId;
-  if (!channelId) return err(res, "channelId required", 400);
+  if (!channelId) return err(res, "CHANNEL_ID_REQUIRED", 400);
   if (!channels.has(channelId)) return err(res, "CHANNEL_NOT_FOUND", 404);
   next();
 };
 
 const validateJob = (req, res, next) => {
   const jobId = req.body?.jobId || req.query?.jobId;
-  if (!jobId) return err(res, "jobId required", 400);
+  if (!jobId) return err(res, "JOB_ID_REQUIRED", 400);
   const found = jobs.find((j) => j.jobId === jobId);
   if (!found) return err(res, "JOB_NOT_FOUND", 404);
   next();
@@ -162,22 +163,36 @@ const ChannelSummaryQuerySchema = z.object({
 // Health
 app.get("/health", (req, res) => sendJson(res, 200, { ok: true, message: "ttirring API running" }));
 
-// Reservations: create (idempotent by reqId)
+// ========== Reservations ==========
 app.post("/v1/reservations", (req, res) => {
-  // ✅ 채널 유효성 404를 Zod 이전에 우선 처리
-  const ch = req.body?.channelId;
-  if (!ch) return err(res, "MISSING_FIELDS", 400);
-  if (!channels.has(ch)) return err(res, "CHANNEL_NOT_FOUND", 404);
+  const b = req.body || {};
 
-  const parsed = ReservationCreateSchema.safeParse(req.body);
-  if (!parsed.success) return err(res, "MISSING_FIELDS", 400); // 테스트 메시지 호환
+  // 0) channelId가 들어왔는데 존재하지 않으면 → 404
+  if (b.channelId !== undefined && !channels.has(b.channelId)) {
+    return err(res, "CHANNEL_NOT_FOUND", 404);
+  }
+
+  // 1) 필수값 누락 → 400
+  const required = ["userId", "channelId", "pickup", "dropoff", "scheduledAt", "reqId"];
+  for (const k of required) {
+    if (b[k] == null) return err(res, "MISSING_FIELDS", 400);
+  }
+
+  // 2) 타입 검증
+  const parsed = ReservationCreateSchema.safeParse(b);
+  if (!parsed.success) return err(res, "BAD_REQUEST", 400);
+
   const { userId, channelId, pickup, dropoff, scheduledAt, reqId } = parsed.data;
 
+  if (!users.has(userId)) return err(res, "USER_NOT_FOUND", 404);
+
+  // 3) idem check
   if (reservationsByReq.has(reqId)) {
     const reservation = reservationsByReq.get(reqId);
     return sendJson(res, 200, { ok: true, reservation, idempotent: true });
   }
 
+  // 4) 생성
   const reservation = {
     reservationId: newId("R"),
     userId,
@@ -189,6 +204,7 @@ app.post("/v1/reservations", (req, res) => {
   };
   reservationsByReq.set(reqId, reservation);
   reservationsById.set(reservation.reservationId, reservation);
+
   return sendJson(res, 201, { ok: true, reservation });
 });
 
@@ -201,7 +217,7 @@ app.get("/v1/reservations/by-req", (req, res) => {
   return sendJson(res, 200, { ok: true, reservation: reservationsByReq.get(reqId) });
 });
 
-// Wallet (미들웨어 + Zod + idempotent)
+// Wallet
 const validateWalletBody = (kind) => (req, res, next) => {
   const parsed = WalletTxSchema.safeParse(req.body);
   if (!parsed.success) return err(res, "BAD_REQUEST", 400);
@@ -216,7 +232,6 @@ const validateWalletBody = (kind) => (req, res, next) => {
 const walletHandler = (kind) => (req, res) => {
   const body = req.body;
 
-  // idempotent by txId
   if (walletTxById.has(body.txId)) {
     const tx = walletTxById.get(body.txId);
     return sendJson(res, 200, { ok: true, tx, idempotent: true });
@@ -236,7 +251,6 @@ const walletHandler = (kind) => (req, res) => {
   return sendJson(res, 201, { ok: true, tx });
 };
 
-// 지갑 출금 (DEBIT)
 app.post(
   "/v1/wallet_tx/debit",
   validateChannel,
@@ -246,7 +260,6 @@ app.post(
   walletHandler("debit")
 );
 
-// 지갑 충전 (CREDIT)
 app.post(
   "/v1/wallet_tx/credit",
   validateChannel,
@@ -260,7 +273,7 @@ app.post(
 app.get("/v1/jobs/stats", (req, res) => {
   const parsed = ChannelIdQuerySchema.safeParse(req.query);
   if (!parsed.success) {
-    if (!req.query?.channelId) return err(res, "MISSING_CHANNEL", 400); // 테스트 호환
+    if (!req.query?.channelId) return err(res, "MISSING_CHANNEL", 400);
     return err(res, "BAD_REQUEST", 400);
   }
   const { channelId } = parsed.data;
@@ -273,17 +286,13 @@ app.get("/v1/jobs/stats", (req, res) => {
   return sendJson(res, 200, { ok: true, channelId, total: list.length, byStatus });
 });
 
-// Channel summary
+// ========== Channel summary ==========
 app.get("/v1/channel-summary", (req, res) => {
-  const parsed = ChannelSummaryQuerySchema.safeParse(req.query);
-  if (!parsed.success) {
-    if (!req.query?.channelId) return err(res, "MISSING_CHANNEL", 400); // 테스트 호환
-    return err(res, "BAD_REQUEST", 400);
-  }
-  const channelId = parsed.data.channelId;
-  const adjustFilter = parsed.data.adjustFilter ?? "none";
-
+  const channelId = req.query?.channelId;
+  if (!channelId) return err(res, "MISSING_CHANNEL", 400);
   if (!channels.has(channelId)) return err(res, "CHANNEL_NOT_FOUND", 404);
+
+  const adjustFilter = req.query?.adjustFilter === "manual" ? "manual" : "none";
 
   const list = jobs.filter((j) => j.channelId === channelId);
   const jobsCount = list.length;
@@ -292,13 +301,32 @@ app.get("/v1/channel-summary", (req, res) => {
   let adjusted = false;
   if (adjustFilter === "manual") {
     adjusted = true;
-    amount = Math.round(amount / 2); // manual = base의 1/2 (테스트 기대)
+    amount = Math.round(amount / 2);
   }
+
   return sendJson(res, 200, {
     ok: true,
     channelId,
     summary: { jobs: jobsCount, amount, adjusted },
   });
+});
+
+// OpenAPI spec direct download
+app.get("/openapi.yaml", (req, res) => {
+  const fp = path.join(__dirname, "..", "openapi", "ttirring_openapi_v0.1.yaml");
+  if (!fs.existsSync(fp)) {
+    return res.status(404).type("text/plain").send("OpenAPI spec not found.");
+  }
+  res.setHeader("Content-Type", "application/yaml; charset=utf-8");
+  res.sendFile(fp);
+});
+
+// OpenAPI spec as JSON
+app.get("/openapi.json", (req, res) => {
+  if (!swaggerDoc) return res.status(404).json({ ok: false, error: "SPEC_NOT_LOADED" });
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Cache-Control", "public, max-age=0");
+  return res.status(200).json(swaggerDoc);
 });
 
 // Swagger UI (/docs)
@@ -310,7 +338,6 @@ if (swaggerUi && swaggerDoc) {
 
 // Fallback 404 & error handler
 app.use((req, res) => err(res, "NOT_FOUND", 404));
-// eslint-disable-next-line no-unused-vars
 app.use((error, req, res, next) => {
   req.log?.error({ err: error, reqId: req.id }, "Unhandled error");
   if (res.headersSent) return;

@@ -1,8 +1,7 @@
 ﻿services:
-  db:
+  ttirring-postgres:
     image: postgres:16-alpine
     container_name: ttirring-postgres
-    restart: unless-stopped
     environment:
       POSTGRES_USER: ttirring
       POSTGRES_PASSWORD: ttirringpw
@@ -10,16 +9,36 @@
     ports:
       - "5432:5432"
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U ttirring -d ttirring || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
 
-  adminer:
+  ttirring-api:
+    image: ghcr.io/aa75587886-ai/ttirring-api:main
+    container_name: ttirring-api
+    depends_on:
+      - ttirring-postgres
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://ttirring:ttirringpw@ttirring-postgres:5432/ttirring?schema=public
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+  ttirring-adminer:
     image: adminer:latest
     container_name: ttirring-adminer
-    restart: unless-stopped
+    depends_on:
+      - ttirring-postgres
     ports:
       - "8080:8080"
-    depends_on:
-      - db
+    environment:
+      ADMINER_DEFAULT_SERVER: ttirring-postgres
+    restart: unless-stopped
 
 volumes:
-  db_data:
+  dbdata:

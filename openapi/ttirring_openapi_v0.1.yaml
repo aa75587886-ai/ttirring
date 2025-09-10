@@ -1,29 +1,24 @@
 ﻿openapi: 3.0.3
 info:
-  title: Ttirring (띠링) Platform API
-  version: 0.1.5
-  description: "P0 적용: idempotent 응답/오류코드/존재 검증 반영"
+  title: Ttirring API
+  version: v0.1
+  description: >
+    Dispatch MVP for Ttirring. Includes idempotent wallet APIs, basic reservations,
+    and report/stat endpoints with standardized error responses.
 
 servers:
-  - url: http://127.0.0.1:3005
-  - url: http://127.0.0.1:3000
+  - url: http://localhost:3000
 
 tags:
-  - name: System
-    description: Health & meta
-  - name: Wallet
-    description: Wallet transactions
-  - name: Jobs
-    description: Jobs & channels
-  - name: Reports
-    description: Aggregated reporting
+  - name: Health
   - name: Reservations
-    description: Booking/reservations
+  - name: Wallet
+  - name: Reports
 
 paths:
   /health:
     get:
-      tags: [System]
+      tags: [Health]
       summary: Health check
       responses:
         '200':
@@ -31,355 +26,243 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  ok: { type: boolean, example: true }
-                  message: { type: string, example: "ttirring API running" }
-
-  /v1/channel-summary:
-    get:
-      tags: [Reports]
-      summary: Channel summary
-      parameters:
-        - in: query
-          name: channelId
-          required: true
-          schema: { type: string, example: CH-02 }
-        - in: query
-          name: adjustFilter
-          required: false
-          schema: { type: string, enum: [manual] }
-          description: "manual 지정 시 금액 절반으로 조정"
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean, example: true }
-                  channelId: { type: string, example: CH-02 }
-                  summary:
-                    type: object
-                    properties:
-                      jobs: { type: integer, example: 3 }
-                      amount: { type: integer, example: 20000 }
-                      adjusted: { type: boolean, example: true }
-        '400':
-          description: Missing channelId
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-        '404':
-          description: Channel not found
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-
-  /v1/wallet_tx/debit:
-    post:
-      tags: [Wallet]
-      summary: Debit wallet (idempotent)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/WalletTxRequest' }
-            examples:
-              create:
-                value:
-                  userId: "DR-01"
-                  amount: 1000
-                  reason: "FEE"
-                  jobId: "J0901"
-                  channelId: "CH-02"
-                  txId: "TX-001"
-      responses:
-        '201':
-          description: Created (first time)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/WalletTxResponse' }
-        '200':
-          description: Idempotent replay (same txId)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/WalletTxResponseIdem' }
-        '400':
-          description: Bad request
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-              examples:
-                missing: { value: { ok: false, error: "MISSING_FIELDS" } }
-                insufficient: { value: { ok: false, error: "INSUFFICIENT_FUNDS" } }
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-              examples:
-                user:    { value: { ok: false, error: "USER_NOT_FOUND" } }
-                job:     { value: { ok: false, error: "JOB_NOT_FOUND" } }
-                channel: { value: { ok: false, error: "CHANNEL_NOT_FOUND" } }
-
-  /v1/wallet_tx/credit:
-    post:
-      tags: [Wallet]
-      summary: Credit wallet (idempotent)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/WalletTxRequest' }
-            examples:
-              create:
-                value:
-                  userId: "DR-01"
-                  amount: 1500
-                  reason: "ADJUST"
-                  jobId: "J0901"
-                  channelId: "CH-02"
-                  txId: "TX-002"
-      responses:
-        '201':
-          description: Created (first time)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/WalletTxResponse' }
-        '200':
-          description: Idempotent replay (same txId)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/WalletTxResponseIdem' }
-        '400':
-          description: Bad request
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-              examples:
-                missing: { value: { ok: false, error: "MISSING_FIELDS" } }
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-              examples:
-                user:    { value: { ok: false, error: "USER_NOT_FOUND" } }
-                job:     { value: { ok: false, error: "JOB_NOT_FOUND" } }
-                channel: { value: { ok: false, error: "CHANNEL_NOT_FOUND" } }
-
-  /v1/jobs/stats:
-    get:
-      tags: [Jobs]
-      summary: Job stats by channel
-      parameters:
-        - in: query
-          name: channelId
-          required: true
-          schema: { type: string, example: CH-02 }
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean, example: true }
-                  channelId: { type: string, example: CH-02 }
-                  total: { type: integer, example: 2 }
-                  byStatus:
-                    type: object
-                    additionalProperties: { type: integer }
-                    example: { COMPLETED: 2, CANCELED: 0 }
-        '400':
-          description: Missing channelId
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-              examples:
-                missing: { value: { ok: false, error: "MISSING_CHANNEL" } }
-        '404':
-          description: Channel not found
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-              examples:
-                channel: { value: { ok: false, error: "CHANNEL_NOT_FOUND" } }
+                $ref: '#/components/schemas/HealthOk'
 
   /v1/reservations:
     post:
       tags: [Reservations]
-      summary: Create reservation (idempotent by reqId)
+      summary: Create reservation
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ReservationCreateRequest' }
+            schema:
+              $ref: '#/components/schemas/ReservationCreateRequest'
             examples:
-              create:
+              example:
                 value:
-                  userId: "DR-01"
-                  channelId: "CH-02"
-                  pickup:   { lat: 37.5, lng: 127.0 }
-                  dropoff:  { lat: 37.6, lng: 127.1 }
+                  userId: DR-01
+                  channelId: CH-02
+                  pickup: { lat: 37.5, lng: 127.0 }
+                  dropoff: { lat: 37.6, lng: 127.1 }
                   scheduledAt: "2025-09-06T10:00:00Z"
-                  reqId: "REQ-001"
+                  reqId: "REQ-XYZ"
       responses:
         '201':
-          description: Created (first time)
+          description: Created
+          headers:
+            X-Idempotent:
+              schema: { type: boolean }
+              description: Whether this response is from an idempotent replay.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ReservationResponse' }
-        '200':
-          description: Idempotent replay (same reqId)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ReservationResponseIdem' }
+              schema:
+                $ref: '#/components/schemas/ReservationCreateResponse'
         '400':
-          description: Missing fields
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-              examples:
-                missing: { value: { ok: false, error: "MISSING_FIELDS" } }
+          $ref: '#/components/responses/BadRequest'
         '404':
-          description: Not found
+          description: Channel or User not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              schema: { $ref: '#/components/schemas/Error' }
               examples:
-                user:    { value: { ok: false, error: "USER_NOT_FOUND" } }
-                channel: { value: { ok: false, error: "CHANNEL_NOT_FOUND" } }
+                CHANNEL_NOT_FOUND: { value: { ok: false, code: "CHANNEL_NOT_FOUND", message: "Unknown channelId" } }
+                USER_NOT_FOUND:    { value: { ok: false, code: "USER_NOT_FOUND",    message: "Unknown userId" } }
 
-  /v1/reservations/by-req:
+  /v1/wallet_tx/debit:
+    post:
+      tags: [Wallet]
+      summary: Debit from driver wallet (idempotent by txId)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WalletDebitRequest' }
+            examples:
+              newTx:
+                value:
+                  userId: DR-01
+                  amount: 1000
+                  reason: FEE
+                  jobId: J0901
+                  channelId: CH-02
+                  txId: TX-20250906-0001
+              replay:
+                value:
+                  userId: DR-01
+                  amount: 1000
+                  reason: FEE
+                  jobId: J0901
+                  channelId: CH-02
+                  txId: TX-20250906-0001
+      responses:
+        '201':
+          description: Debited (first time)
+          headers:
+            X-Idempotent:
+              schema: { type: boolean, example: false }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletDebitResponse' }
+        '200':
+          description: Idempotent replay (no-op)
+          headers:
+            X-Idempotent:
+              schema: { type: boolean, example: true }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletDebitResponse' }
+              examples:
+                replay:
+                  value:
+                    ok: true
+                    debit:
+                      userId: DR-01
+                      amount: 1000
+                      reason: FEE
+                      jobId: J0901
+                      channelId: CH-02
+                      txId: TX-20250906-0001
+                    idempotent: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          description: Related entity not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                CHANNEL_NOT_FOUND: { value: { ok: false, code: "CHANNEL_NOT_FOUND", message: "Unknown channelId" } }
+                USER_NOT_FOUND:    { value: { ok: false, code: "USER_NOT_FOUND",    message: "Unknown userId" } }
+                JOB_NOT_FOUND:     { value: { ok: false, code: "JOB_NOT_FOUND",     message: "Unknown jobId" } }
+
+  /v1/jobs/stats:
     get:
-      tags: [Reservations]
-      summary: Get reservation by reqId
+      tags: [Reports]
+      summary: Job statistics by channel
       parameters:
         - in: query
-          name: reqId
+          name: channelId
+          schema: { type: string }
           required: true
-          schema: { type: string, example: REQ-001 }
       responses:
         '200':
-          description: OK
+          description: Stats
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ReservationResponse' }
-        '400':
-          description: Missing reqId
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
-              examples:
-                missing: { value: { ok: false, error: "MISSING_REQID" } }
+              schema: { $ref: '#/components/schemas/JobsStatsResponse' }
         '404':
-          description: Reservation not found
+          description: Channel not found
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              schema: { $ref: '#/components/schemas/Error' }
               examples:
-                notfound: { value: { ok: false, error: "RESERVATION_NOT_FOUND" } }
+                CHANNEL_NOT_FOUND: { value: { ok: false, code: "CHANNEL_NOT_FOUND", message: "Unknown channelId" } }
 
 components:
+  responses:
+    BadRequest:
+      description: Bad Request (validation)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            INVALID_REQUEST:
+              value: { ok: false, code: "INVALID_REQUEST", message: "Invalid fields" }
+
   schemas:
-    WalletTxRequest:
-      type: object
-      required: [userId, amount, reason, jobId, channelId, txId]
-      properties:
-        userId:    { type: string, example: DR-01 }
-        amount:    { type: integer, minimum: 1, example: 1000 }
-        reason:    { type: string, example: FEE }
-        jobId:     { type: string, example: J0901 }
-        channelId: { type: string, example: CH-02 }
-        txId:
-          type: string
-          description: Idempotency key (same body+txId → 200)
-          example: TX-001
-
-    WalletTx:
-      type: object
-      properties:
-        txId:      { type: string, example: TX-001 }
-        userId:    { type: string, example: DR-01 }
-        amount:    { type: integer, example: 1000 }
-        reason:    { type: string, example: FEE }
-        jobId:     { type: string, example: J0901 }
-        channelId: { type: string, example: CH-02 }
-        type:      { type: string, enum: [DEBIT, CREDIT] }
-
-    WalletTxResponse:
+    HealthOk:
       type: object
       properties:
         ok: { type: boolean, example: true }
-        tx: { $ref: '#/components/schemas/WalletTx' }
+        message: { type: string, example: "Reservation/Wallet API running" }
 
-    WalletTxResponseIdem:
-      allOf:
-        - $ref: '#/components/schemas/WalletTxResponse'
-        - type: object
-          properties:
-            idempotent: { type: boolean, example: true }
-
-    Location:
+    LatLng:
       type: object
       required: [lat, lng]
       properties:
-        lat: { type: number, example: 37.5 }
-        lng: { type: number, example: 127.0 }
+        lat: { type: number }
+        lng: { type: number }
 
     ReservationCreateRequest:
       type: object
-      required: [userId, pickup, dropoff, scheduledAt, channelId]
+      required: [userId, channelId, pickup, dropoff, scheduledAt, reqId]
       properties:
-        userId:    { type: string, example: DR-01 }
-        channelId: { type: string, example: CH-02 }
-        pickup:    { $ref: '#/components/schemas/Location' }
-        dropoff:   { $ref: '#/components/schemas/Location' }
-        scheduledAt: { type: string, format: date-time, example: "2025-09-06T10:00:00Z" }
-        reqId:
-          type: string
-          description: Idempotency key (same body+reqId → 200)
-          example: REQ-001
+        userId: { type: string }
+        channelId: { type: string }
+        pickup: { $ref: '#/components/schemas/LatLng' }
+        dropoff: { $ref: '#/components/schemas/LatLng' }
+        scheduledAt: { type: string, format: date-time }
+        reqId: { type: string, description: "Idempotency key for reservations" }
 
-    Reservation:
-      type: object
-      properties:
-        reservationId: { type: string, example: R-1693999999999-123 }
-        userId:        { type: string, example: DR-01 }
-        channelId:     { type: string, example: CH-02 }
-        pickup:        { $ref: '#/components/schemas/Location' }
-        dropoff:       { $ref: '#/components/schemas/Location' }
-        scheduledAt:   { type: string, format: date-time }
-
-    ReservationResponse:
+    ReservationCreateResponse:
       type: object
       properties:
         ok: { type: boolean, example: true }
-        reservation: { $ref: '#/components/schemas/Reservation' }
-
-    ReservationResponseIdem:
-      allOf:
-        - $ref: '#/components/schemas/ReservationResponse'
-        - type: object
+        reservation:
+          type: object
           properties:
-            idempotent: { type: boolean, example: true }
+            reservationId: { type: string, example: "R-1757159525356-82" }
+            userId: { type: string, example: "DR-01" }
+            channelId: { type: string, example: "CH-02" }
+            pickup: { $ref: '#/components/schemas/LatLng' }
+            dropoff: { $ref: '#/components/schemas/LatLng' }
+            scheduledAt: { type: string, format: date-time }
 
-    ErrorResponse:
+    WalletDebitRequest:
+      type: object
+      required: [userId, amount, reason, channelId, txId]
+      properties:
+        userId: { type: string }
+        amount: { type: integer, minimum: 1 }
+        reason: { type: string, example: "FEE" }
+        jobId: { type: string, nullable: true }
+        channelId: { type: string }
+        txId: { type: string, description: "Idempotency key for debit" }
+
+    WalletDebitResponse:
       type: object
       properties:
+        ok: { type: boolean, example: true }
+        debit:
+          type: object
+          properties:
+            userId: { type: string }
+            amount: { type: integer }
+            reason: { type: string }
+            jobId: { type: string, nullable: true }
+            channelId: { type: string }
+            txId: { type: string }
+        idempotent: { type: boolean, example: false }
+
+    JobsStatsResponse:
+      type: object
+      properties:
+        ok: { type: boolean, example: true }
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              day: { type: string, example: "2025-09-01" }
+              jobs: { type: integer, example: 3 }
+              amount: { type: integer, example: 53000 }
+              driverPayout: { type: integer, example: 42400 }
+              platformFee: { type: integer, example: 10600 }
+        channelId: { type: string, example: "CH-02" }
+
+    Error:
+      type: object
+      required: [ok, code, message]
+      properties:
         ok: { type: boolean, example: false }
-        error:
+        code:
           type: string
           enum:
-            - MISSING_FIELDS
-            - INSUFFICIENT_FUNDS
+            - INVALID_REQUEST
             - USER_NOT_FOUND
             - JOB_NOT_FOUND
             - CHANNEL_NOT_FOUND
-            - MISSING_CHANNEL
-            - MISSING_REQID
-            - RESERVATION_NOT_FOUND
+        message:
+          type: string
+          example: "Unknown channelId"
